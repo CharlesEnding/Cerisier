@@ -1,0 +1,64 @@
+/* Cerisier web UI: plain CSS, server-rendered pages, no framework. */
+:root {
+  --bg: #1e1f22;
+  --bg-panel: #26282c;
+  --fg: #e6e6e6;
+  --accent: #6ea8fe;
+  --border: #3a3d42;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+#sidebar {
+  width: 260px;
+  min-width: 260px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  transition: margin-left 0.15s ease;
+}
+body.sidebar-collapsed #sidebar {
+  margin-left: -260px;
+}
+#sidebar h2 { font-size: 0.9rem; text-transform: uppercase; color: #999; margin: 1rem 1rem 0.25rem; }
+#sidebar a { display: block; padding: 0.4rem 1rem; color: var(--fg); text-decoration: none; }
+#sidebar a:hover { background: #33363b; }
+#main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1.5rem 2rem;
+}
+#sidebar-toggle {
+  position: fixed;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 10;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.pending { border-left: 3px solid #e0a800; padding-left: 0.5rem; }
+.tool-call { border-left: 3px solid var(--accent); padding-left: 0.5rem; margin: 0.5rem 0; }
+.sub-conversation { border-left: 3px solid #7ee787; padding-left: 0.5rem; margin: 0.5rem 0; }
+.reasoning { color: #999; font-style: italic; border-left: 3px solid #666; padding-left: 0.5rem; }
+form.inline { display: inline; }
+table { width: 100%; border-collapse: collapse; }
+th, td { border-bottom: 1px solid var(--border); padding: 0.4rem; text-align: left; }
+input, textarea, select, button {
+  background: var(--bg-panel); color: var(--fg); border: 1px solid var(--border);
+  padding: 0.4rem; border-radius: 4px;
+}
+button { cursor: pointer; }
+#chat-log { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
+.msg { padding: 0.5rem; border-radius: 6px; background: var(--bg-panel); }
+.msg.user { align-self: flex-end; background: #2b3a55; }
