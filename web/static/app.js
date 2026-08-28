@@ -10,12 +10,42 @@ function connectChat(conversationId) {
   if (!log) return;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${conversationId}`);
+  const stopBtn = document.getElementById('stop-btn');
+  let streamingDiv = null;
+
+  function setGenerating(isGenerating) {
+    if (stopBtn) stopBtn.style.display = isGenerating ? '' : 'none';
+  }
 
   ws.onmessage = (ev) => {
     const data = JSON.parse(ev.data);
+    if (data.type === 'assistant_token') {
+      if (!streamingDiv) {
+        streamingDiv = document.createElement('div');
+        streamingDiv.className = 'msg';
+        log.appendChild(streamingDiv);
+        setGenerating(true);
+      }
+      streamingDiv.textContent += data.content;
+      log.scrollTop = log.scrollHeight;
+      return;
+    }
+    if (data.type === 'assistant_message') {
+      if (streamingDiv) {
+        streamingDiv.remove();
+        streamingDiv = null;
+      }
+      setGenerating(false);
+    }
+    if (data.type === 'title_updated') {
+      const titleEl = document.getElementById('chat-title');
+      if (titleEl) titleEl.textContent = data.title;
+      return;
+    }
     appendEvent(log, data);
   };
   ws.onclose = () => {
+    setGenerating(false);
     const div = document.createElement('div');
     div.textContent = '(disconnected)';
     log.appendChild(div);
@@ -30,6 +60,23 @@ function connectChat(conversationId) {
       ws.send(JSON.stringify({type: 'user_message', content: input.value}));
       appendEvent(log, {type: 'user_message', content: input.value});
       input.value = '';
+    });
+  }
+
+  if (stopBtn) {
+    stopBtn.addEventListener('click', () => {
+      ws.send(JSON.stringify({type: 'cancel_generation'}));
+    });
+  }
+
+  const modelSelect = document.getElementById('model-select');
+  if (modelSelect) {
+    modelSelect.addEventListener('change', () => {
+      fetch(`/chat/${conversationId}/model`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({model: modelSelect.value}),
+      });
     });
   }
 }

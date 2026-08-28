@@ -49,12 +49,29 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
   var log = ""
   for (id, parentId, role, content, createdAt) in s.db.messagesForConversation(currentId):
     log.add(&"<div class=\"msg {role}\">{content}</div>\n")
+  let title = s.db.getConversationTitle(currentId)
+  var currentModel = ""
+  var modelOptions = ""
+  try:
+    let models = s.router.listModels()
+    if s.chatSessions.hasKey(currentId):
+      currentModel = s.chatSessions[currentId].model
+    for m in models:
+      let selected = if m.id == currentModel: " selected" else: ""
+      modelOptions.add(&"<option value=\"{m.id}\"{selected}>{m.id} ({m.status})</option>")
+  except CatchableError as e:
+    logInfo("router", "listModels failed: " & e.msg)
   let body = &"""
-  <h1>Conversation #{currentId}</h1>
+  <div id="chat-header">
+    <h1 id="chat-title">{title}</h1>
+    <label for="model-select">Model:</label>
+    <select id="model-select">{modelOptions}</select>
+  </div>
   <div id="chat-log">{log}</div>
   <form id="chat-form">
     <input id="chat-input" type="text" placeholder="Message..." autocomplete="off">
     <button type="submit">Send</button>
+    <button type="button" id="stop-btn" style="display:none">Stop</button>
   </form>
   <script>connectChat({currentId});</script>
   """
@@ -71,6 +88,12 @@ proc chatPageWithId*(ctx: Context) {.async, gcsafe.} =
     await renderChatPage(ctx, some(parseBiggestInt(idStr).int64))
   except ValueError:
     await renderChatPage(ctx, none(int64))
+
+proc newConversationGet*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  let newId = s.orchestrator.startConversation("New conversation")
+  logInfo("routes", "GET /conversations/new -> " & $newId)
+  resp redirect("/chat/" & $newId)
 
 proc historyPage*(ctx: Context) {.async, gcsafe.} =
   logInfo("routes", "GET /history")
@@ -132,7 +155,7 @@ proc toolsPage*(ctx: Context) {.async, gcsafe.} =
         <form class="inline" method="post" action="/tools/deny"><input type="hidden" name="id" value="{id}"><button>Deny</button></form>
       </td></tr>""")
   let body = &"""<h1>Tools — Pending Approval</h1>
-  <p>Every tool call is shown here with its exact parameters before it can run.</p>
+  <p>Tool calls awaiting approval are listed here. Approve or deny each one; approved calls run and their result is posted back into the conversation.</p>
   <table><tr><th>#</th><th>Tool</th><th>Location</th><th>Args</th><th>Action</th></tr>{rows}</table>"""
   resp htmlResponse(page("Tools", "/tools", body))
 
@@ -227,15 +250,58 @@ proc getOrCreateChatSession(s: AppState, convId: int64): LlamaSession =
   result = newLlamaSession(s.db, s.router, convId, none(int64), model, "chat", 8192)
   s.chatSessions[convId] = result
 
+proc switchChatModel(s: AppState, convId: int64, modelId: string): LlamaSession =
+  discard s.router.loadModel(modelId)
+  result = newLlamaSession(s.db, s.router, convId, none(int64), modelId, "chat", 8192)
+  s.chatSessions[convId] = result
+
+proc chatModelPost*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  let convId = parseBiggestInt(ctx.getPathParams("id")).int64
+  let payload = parseJson(ctx.request.body)
+  let modelId = payload{"model"}.getStr("")
+  try:
+    discard switchChatModel(s, convId, modelId)
+    logInfo("routes", "conversation " & $convId & " switched to model " & modelId)
+    resp jsonResponse(%*{"success": true})
+  except CatchableError as e:
+    logInfo("routes", "model switch failed: " & e.msg)
+    resp jsonResponse(%*{"success": false, "error": e.msg})
+
+const titleGenThreshold = 3 ## generate a topic title once a conversation reaches this many messages
+
+proc maybeGenerateTitle(s: AppState, convId: int64, sess: LlamaSession,
+                         history: seq[(string, string)]): Option[string] =
+  ## After a few messages, ask the model for a short topic title and store
+  ## it, replacing the default "New conversation" placeholder.
+  if history.len < titleGenThreshold:
+    return none(string)
+  if s.db.getConversationTitle(convId) != "New conversation":
+    return none(string)
+  try:
+    let prompt = @[("user", "In 3-6 words, give a short topic title for this " &
+                            "conversation. Reply with only the title, no punctuation.")]
+    let title = sess.sendTurn(history & prompt).strip(chars = {' ', '\n', '\t', '"', '.'})
+    if title.len > 0:
+      s.db.updateConversationTitle(convId, title)
+      return some(title)
+  except CatchableError as e:
+    logInfo("routes", "title generation failed: " & e.msg)
+  none(string)
+
 proc wsChat*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
   let convId = parseInt(ctx.getPathParams("id"))
   var ws = await newWebSocket(ctx)
+  var cancelled = false
   while ws.readyState == Open:
     try:
       let packet = await ws.receiveStrPacket()
       let node = parseJson(packet)
-      if node{"type"}.getStr("") == "user_message":
+      let msgType = node{"type"}.getStr("")
+      if msgType == "cancel_generation":
+        cancelled = true
+      elif msgType == "user_message":
         let content = node{"content"}.getStr("")
         discard s.orchestrator.appendMessage(convId.int64, none(int64), "user", content)
         logInfo("ws", "conversation " & $convId & " user message (" & $content.len & " chars)")
@@ -245,10 +311,20 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
           for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId.int64):
             history.add((role, msgContent))
           logInfo("router", "sendTurn model=" & sess.model & " messages=" & $history.len)
-          let reply = sess.sendTurn(history)
-          logInfo("router", "sendTurn reply (" & $reply.len & " chars): " & reply[0 ..< min(120, reply.len)])
+          cancelled = false
+          let onToken = proc(tok: string) {.gcsafe.} =
+            {.cast(gcsafe).}:
+              waitFor ws.send($(%*{"type": "assistant_token", "content": tok}))
+          let isCancelled = proc(): bool {.gcsafe.} =
+            {.cast(gcsafe).}:
+              cancelled
+          let reply = sess.sendTurnStreaming(history, onToken, isCancelled)
+          logInfo("router", "sendTurn reply (" & $reply.len & " chars)")
           discard s.orchestrator.appendMessage(convId.int64, none(int64), "assistant", reply)
-          await ws.send($(%*{"type": "assistant_message", "content": reply}))
+          await ws.send($(%*{"type": "assistant_message", "content": reply, "cancelled": cancelled}))
+          let newTitle = maybeGenerateTitle(s, convId.int64, sess, history)
+          if newTitle.isSome:
+            await ws.send($(%*{"type": "title_updated", "title": newTitle.get()}))
         except CatchableError as e:
           logInfo("ws", "chat turn failed: " & e.msg)
           await ws.send($(%*{"type": "assistant_message", "content": "(error: " & e.msg & ")"}))

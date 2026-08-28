@@ -4,7 +4,7 @@
 ## that a caller can choose not to invoke; nothing here executes at
 ## module-import time.
 
-import std/[httpclient, json, uri, strformat]
+import std/[httpclient, json, uri, strformat, streams, strutils]
 import ../../common/types
 import ../log
 
@@ -35,6 +35,46 @@ proc postJson*(rc: RouterClient, path: string, body: JsonNode): JsonNode =
   client.headers = newHttpHeaders({"Content-Type": "application/json"})
   let resp = client.postContent(rc.baseUrl & path, $body)
   parseJson(resp)
+
+proc postJsonStream*(rc: RouterClient, path: string, body: JsonNode,
+                      onChunk: proc(chunk: string) {.gcsafe.},
+                      isCancelled: proc(): bool {.gcsafe.}): JsonNode =
+  ## Streams a chat-completion style POST as Server-Sent Events, invoking
+  ## `onChunk` with each incremental assistant text fragment as it arrives.
+  ## Uses no fixed request timeout since generation length is unbounded;
+  ## `isCancelled` is polled after every SSE line so a caller can abort a
+  ## long-running generation (checked between token chunks, so it stays
+  ## responsive as long as the model keeps producing output).
+  let client = newHttpClient(timeout = -1)
+  defer: client.close()
+  client.headers = newHttpHeaders({"Content-Type": "application/json"})
+  let resp = client.request(rc.baseUrl & path, httpMethod = HttpPost, body = $body)
+  var fullText = ""
+  var lastUsage: JsonNode = nil
+  while not resp.bodyStream.atEnd():
+    if isCancelled():
+      break
+    let line = resp.bodyStream.readLine().strip()
+    if line.len == 0 or not line.startsWith("data:"):
+      continue
+    let payload = line[5 .. ^1].strip()
+    if payload == "[DONE]":
+      break
+    let node = parseJson(payload)
+    let choices = node{"choices"}
+    if choices != nil and choices.kind == JArray and choices.len > 0:
+      let delta = choices[0]{"delta"}
+      if delta != nil:
+        let piece = delta{"content"}.getStr("")
+        if piece.len > 0:
+          fullText.add(piece)
+          onChunk(piece)
+    let usage = node{"usage"}
+    if usage != nil:
+      lastUsage = usage
+  result = %*{"content": fullText}
+  if lastUsage != nil:
+    result["usage"] = lastUsage
 
 
 proc health*(rc: RouterClient): bool =

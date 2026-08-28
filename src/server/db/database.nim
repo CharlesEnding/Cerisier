@@ -97,6 +97,14 @@ proc listConversations*(db: Database): seq[(int64, string, string)] =
   for row in db.conn.fastRows(sql"SELECT id, title, created_at FROM agent_conversations ORDER BY id DESC"):
     result.add((parseBiggestInt(row[0]).int64, row[1], row[2]))
 
+proc getConversationTitle*(db: Database, conversationId: int64): string =
+  for row in db.conn.fastRows(sql"SELECT title FROM agent_conversations WHERE id = ?", conversationId):
+    return row[0]
+  ""
+
+proc updateConversationTitle*(db: Database, conversationId: int64, title: string) =
+  db.conn.exec(sql"UPDATE agent_conversations SET title = ? WHERE id = ?", title, conversationId)
+
 # ---- messages ----
 
 proc addMessage*(db: Database, conversationId: int64, parentId: Option[int64],

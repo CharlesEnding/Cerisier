@@ -50,17 +50,17 @@ proc recordUsage*(session: LlamaSession, promptTokens, completionTokens: int) =
   session.completionTokens = completionTokens
   session.db.updateSessionTokens(session.id, promptTokens, completionTokens)
 
-proc buildChatRequest(model: string, messages: seq[(string, string)]): JsonNode =
+proc buildChatRequest(model: string, messages: seq[(string, string)], stream: bool): JsonNode =
   var msgs = newJArray()
   for (role, content) in messages:
     msgs.add(%*{"role": role, "content": content})
-  %*{"model": model, "messages": msgs, "stream": false}
+  %*{"model": model, "messages": msgs, "stream": stream}
 
 proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): string =
   ## Sends a full-history chat turn to the router and returns the assistant
   ## text. Records token usage from the `usage` field. Raises on transport
   ## error — callers should catch when no router is reachable.
-  let body = buildChatRequest(session.model, messages)
+  let body = buildChatRequest(session.model, messages, stream = false)
   let resp = session.router.postJson("/v1/chat/completions", body)
   let usage = resp{"usage"}
   if usage != nil:
@@ -72,6 +72,23 @@ proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): string =
     discard session.db.addTurn(session.id, "assistant", result)
   else:
     result = ""
+
+proc sendTurnStreaming*(session: LlamaSession, messages: seq[(string, string)],
+                         onToken: proc(tok: string) {.gcsafe.},
+                         isCancelled: proc(): bool {.gcsafe.}): string =
+  ## Like `sendTurn`, but streams the assistant reply token-by-token via
+  ## `onToken` as it's generated, and can be aborted early by `isCancelled`.
+  ## Whatever text was accumulated so far (full or partial, if cancelled)
+  ## is recorded as the turn and returned.
+  let body = buildChatRequest(session.model, messages, stream = true)
+  let resp = session.router.postJsonStream("/v1/chat/completions", body, onToken, isCancelled)
+  let usage = resp{"usage"}
+  if usage != nil:
+    session.recordUsage(usage{"prompt_tokens"}.getInt(session.promptTokens),
+                          usage{"completion_tokens"}.getInt(session.completionTokens))
+  result = resp{"content"}.getStr("")
+  if result.len > 0:
+    discard session.db.addTurn(session.id, "assistant", result)
 
 proc summarizePrompt(): string =
   "Summarize the conversation so far concisely, preserving all facts and " &

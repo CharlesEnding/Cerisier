@@ -15,6 +15,7 @@ const sidebarLinks = [
 
 proc renderSidebar(active: string): string =
   result = "<div id=\"sidebar\"><h2>Cerisier</h2>\n"
+  result.add("<a href=\"/conversations/new\" id=\"new-conversation-link\">+ New conversation</a>\n")
   for (href, label) in sidebarLinks:
     let cls = if href == active: " style=\"font-weight:bold\"" else: ""
     result.add("<a href=\"" & href & "\"" & cls & ">" & label & "</a>\n")

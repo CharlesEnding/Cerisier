@@ -36,6 +36,8 @@ when isMainModule:
 
   app.get("/", chatPage)
   app.get("/chat/{id}", chatPageWithId)
+  app.get("/conversations/new", newConversationGet)
+  app.post("/chat/{id}/model", chatModelPost)
   app.get("/history", historyPage)
   app.get("/models", modelsPage)
   app.post("/models/load", modelsLoadPost)
