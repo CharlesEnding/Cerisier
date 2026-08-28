@@ -8,6 +8,7 @@ const sidebarLinks = [
   ("/", "Chat"),
   ("/history", "History"),
   ("/models", "Models"),
+  ("/router", "Router"),
   ("/tools", "Tools"),
   ("/skills", "Skills"),
   ("/formats", "Formats"),

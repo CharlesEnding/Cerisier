@@ -2,7 +2,7 @@
 ## Every page is a normal server-rendered full page load, except the chat
 ## page's WebSocket channel which live-updates in place.
 
-import std/[asyncdispatch, json, strformat, options, strutils, tables, sequtils, deques]
+import std/[asyncdispatch, json, strformat, options, strutils, tables, sequtils, deques, times]
 import prologue
 import prologue/websocket
 import ./layout
@@ -28,6 +28,7 @@ type
     toolRegistry*: ToolRegistry
     presetsPath*: string
     pm*: ProcessManager ## router process supervisor, for status reporting in the UI
+    lastLoadAttempt*: string ## "modelId at HH:mm:ss" of the most recent load attempt, for diagnostics
 
 var state*: AppState
 
@@ -50,12 +51,38 @@ proc routerStatusBanner(s: AppState): string =
   of psRunning, psStarting:
     return ""
   of psCrashed:
+    let attemptNote = if s.lastLoadAttempt.len > 0: &" Last load attempted: {s.lastLoadAttempt}." else: ""
     if s.pm.restartCount >= 5:
-      return &"""<div class="router-banner">Router process crashed and auto-restart attempts are exhausted (last reason: {s.pm.lastCrashReason}). Restart the server manually.</div>"""
+      return &"""<div class="router-banner">Router process crashed and auto-restart attempts are exhausted (last reason: {s.pm.lastCrashReason}).{attemptNote} Restart the server manually. See <a href="/router">Router status</a> for the diagnostic log.</div>"""
     else:
-      return &"""<div class="router-banner">Router process crashed (last reason: {s.pm.lastCrashReason}) — restarting automatically (attempt {s.pm.restartCount}/5).</div>"""
+      return &"""<div class="router-banner">Router process crashed (last reason: {s.pm.lastCrashReason}) — restarting automatically (attempt {s.pm.restartCount}/5).{attemptNote} See <a href="/router">Router status</a> for the diagnostic log.</div>"""
   of psStopped:
-    return """<div class="router-banner">Router process is not running.</div>"""
+    return """<div class="router-banner">Router process is not running. See <a href="/router">Router status</a>.</div>"""
+
+proc noteLoadAttempt(s: AppState, modelId: string) =
+  ## Records what was last attempted so the router-crashed banner and the
+  ## /router diagnostics page can hint at what likely caused a crash, since
+  ## a VRAM-OOM crash can happen a moment after the load request itself
+  ## already returned (or the router died before responding at all).
+  s.lastLoadAttempt = modelId & " at " & now().format("HH:mm:ss")
+
+proc routerAwareFailureReason(s: AppState, fallback: string): string =
+  ## Builds a chat-facing error message that names the router's actual
+  ## state (crashed/stopped + reason) when available, instead of a generic
+  ## "something went wrong" — this is what actually distinguishes a VRAM-OOM
+  ## router crash from a transient/other failure for the user.
+  if s.pm == nil:
+    return fallback
+  case s.pm.state
+  of psCrashed:
+    result = "router process crashed (reason: " & s.pm.lastCrashReason & ")"
+    if s.pm.restartCount < 5:
+      result.add(" — restarting automatically")
+    result.add(". See the Router page for details.")
+  of psStopped:
+    result = "router process is not running. See the Router page for details."
+  of psStarting, psRunning:
+    result = fallback
 
 # ---------------- Chat (the one live-updating page) ----------------
 
@@ -79,7 +106,7 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
   var currentModel = ""
   var modelOptions = ""
   try:
-    let models = s.router.listModels()
+    let models = await s.router.listModels()
     ## Prefer whatever the router itself reports as loaded — this is the
     ## ground truth. The cached chat session's `model` field is only a
     ## fallback for when nothing is loaded yet or the router is unreachable,
@@ -131,6 +158,54 @@ proc newConversationGet*(ctx: Context) {.async, gcsafe.} =
   logInfo("routes", "GET /conversations/new -> " & $newId)
   resp redirect("/chat/" & $newId)
 
+# ---------------- Router status (diagnostics) ----------------
+
+proc escapeHtml(s: string): string =
+  result = newStringOfCap(s.len)
+  for c in s:
+    case c
+    of '&': result.add("&amp;")
+    of '<': result.add("&lt;")
+    of '>': result.add("&gt;")
+    else: result.add(c)
+
+proc routerPage*(ctx: Context) {.async, gcsafe.} =
+  logInfo("routes", "GET /router")
+  let s = getState()
+  if s.pm == nil:
+    resp htmlResponse(page("Router", "/router", "<h1>Router</h1><p>No process supervisor configured.</p>"))
+    return
+  let stateLabel =
+    case s.pm.state
+    of psRunning: "running"
+    of psStarting: "starting"
+    of psCrashed: "crashed"
+    of psStopped: "stopped"
+  let attemptRow = if s.lastLoadAttempt.len > 0: &"<tr><td>Last load attempt</td><td>{escapeHtml(s.lastLoadAttempt)}</td></tr>" else: ""
+  let crashRow = if s.pm.lastCrashReason.len > 0: &"<tr><td>Last crash reason</td><td>{escapeHtml(s.pm.lastCrashReason)}</td></tr>" else: ""
+  let stats = s.pm.logFileStats()
+  let logStatsRow =
+    if stats.exists: &"<tr><td>Log file</td><td>{escapeHtml(s.pm.logFile)} ({stats.sizeBytes} bytes, last written {escapeHtml(stats.lastModified)})</td></tr>"
+    else: &"<tr><td>Log file</td><td>{escapeHtml(s.pm.logFile)} (does not exist yet)</td></tr>"
+  var logLines = ""
+  for line in s.pm.recentOutput():
+    logLines.add(escapeHtml(line) & "\n")
+  if logLines.len == 0:
+    logLines = "(no output captured yet)"
+  let body = &"""<h1>Router status</h1>
+  <table>
+    <tr><td>State</td><td>{stateLabel}</td></tr>
+    <tr><td>Restart count</td><td>{s.pm.restartCount} / 5</td></tr>
+    <tr><td>Last exit code</td><td>{s.pm.lastExitCode}</td></tr>
+    {crashRow}
+    {attemptRow}
+    {logStatsRow}
+  </table>
+  <p><a href="/router">Refresh</a></p>
+  <h2>Recent router output (stdout/stderr)</h2>
+  <pre id="router-log">{logLines}</pre>"""
+  resp htmlResponse(page("Router", "/router", body))
+
 proc historyPage*(ctx: Context) {.async, gcsafe.} =
   logInfo("routes", "GET /history")
   let s = getState()
@@ -142,12 +217,47 @@ proc historyPage*(ctx: Context) {.async, gcsafe.} =
 
 # ---------------- Models ----------------
 
+proc routerStatusJson*(ctx: Context) {.async, gcsafe.} =
+  ## Polled by the frontend after a load/switch is accepted, since the
+  ## router may accept a load request and only crash later (in the
+  ## background) once VRAM actually runs out — the initial HTTP response
+  ## can't know that yet. This lets the UI catch up once it does.
+  let s = getState()
+  if s.pm == nil:
+    resp jsonResponse(%*{"state": "unknown"})
+    return
+  let stateLabel =
+    case s.pm.state
+    of psRunning: "running"
+    of psStarting: "starting"
+    of psCrashed: "crashed"
+    of psStopped: "stopped"
+  resp jsonResponse(%*{
+    "state": stateLabel,
+    "restartCount": s.pm.restartCount,
+    "lastExitCode": s.pm.lastExitCode,
+    "lastCrashReason": s.pm.lastCrashReason,
+    "lastLoadAttempt": s.lastLoadAttempt,
+    "logSizeBytes": s.pm.logFileStats().sizeBytes,
+  })
+
+proc modelsStatusJson*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  try:
+    let models = await s.router.listModels()
+    var arr = newJArray()
+    for m in models:
+      arr.add(%*{"id": m.id, "status": $m.status})
+    resp jsonResponse(%*{"success": true, "models": arr})
+  except CatchableError as e:
+    resp jsonResponse(%*{"success": false, "error": e.msg})
+
 proc modelsPage*(ctx: Context) {.async, gcsafe.} =
   logInfo("routes", "GET /models")
   let s = getState()
   var rows = ""
   try:
-    let models = s.router.listModels()
+    let models = await s.router.listModels()
     logInfo("router", "listModels -> " & $models.len & " model(s)")
     for m in models:
       rows.add(&"""<tr id="model-row-{m.id}"><td>{m.id}</td><td class="model-status">{m.status}</td><td>{m.supportsVision}</td>
@@ -203,17 +313,23 @@ proc modelsLoadPost*(ctx: Context) {.async, gcsafe.} =
     ## requested one, mirroring `switchChatModel`'s behavior. Without this,
     ## a failed load previously left the *other* (e.g. default/startup)
     ## model loaded with no indication anything went wrong.
-    for m in s.router.listModels():
+    if s.pm != nil: s.pm.logAppend("load requested model=" & model)
+    let currentModels = await s.router.listModels()
+    for m in currentModels:
       if m.status == msvLoaded and m.id != model:
-        let unloadRes = s.router.unloadModel(m.id)
+        let unloadRes = await s.router.unloadModel(m.id)
+        if s.pm != nil: s.pm.logAppend("unload (pre-load) model=" & m.id & " success=" & $unloadRes.success & " error=" & unloadRes.error)
         if not unloadRes.success:
           logError("router", "unload " & m.id & " before loading " & model & " failed: " & unloadRes.error)
-    let res = s.router.loadModel(model)
+    let res = await s.router.loadModel(model)
+    noteLoadAttempt(s, model)
+    if s.pm != nil: s.pm.logAppend("load result model=" & model & " success=" & $res.success & " error=" & res.error)
     if res.success:
       resp jsonResponse(%*{"success": true})
     else:
       resp jsonResponse(%*{"success": false, "error": res.error})
   except CatchableError as e:
+    if s.pm != nil: s.pm.logAppend("load result model=" & model & " success=false error=" & e.msg)
     logError("routes", "load model " & model & " failed: " & e.msg)
     resp jsonResponse(%*{"success": false, "error": e.msg})
 
@@ -222,12 +338,15 @@ proc modelsUnloadPost*(ctx: Context) {.async, gcsafe.} =
   let payload = parseJson(ctx.request.body)
   let model = payload{"model"}.getStr("")
   try:
-    let res = s.router.unloadModel(model)
+    if s.pm != nil: s.pm.logAppend("unload requested model=" & model)
+    let res = await s.router.unloadModel(model)
+    if s.pm != nil: s.pm.logAppend("unload result model=" & model & " success=" & $res.success & " error=" & res.error)
     if res.success:
       resp jsonResponse(%*{"success": true})
     else:
       resp jsonResponse(%*{"success": false, "error": res.error})
   except CatchableError as e:
+    if s.pm != nil: s.pm.logAppend("unload result model=" & model & " success=false error=" & e.msg)
     logError("routes", "unload model " & model & " failed: " & e.msg)
     resp jsonResponse(%*{"success": false, "error": e.msg})
 
@@ -378,26 +497,29 @@ proc formatsNewPost*(ctx: Context) {.async, gcsafe.} =
 
 # ---------------- WebSocket: chat live updates ----------------
 
-proc pickChatModel(s: AppState): string =
-  let models = s.router.listModels()
+proc pickChatModel(s: AppState): Future[string] {.async.} =
+  let models = await s.router.listModels()
   for m in models:
     if m.status == msvLoaded:
       return m.id
   if models.len > 0:
-    let res = s.router.loadModel(models[0].id)
+    if s.pm != nil: s.pm.logAppend("load requested model=" & models[0].id & " (auto-pick for new chat session)")
+    let res = await s.router.loadModel(models[0].id)
+    noteLoadAttempt(s, models[0].id)
+    if s.pm != nil: s.pm.logAppend("load result model=" & models[0].id & " success=" & $res.success & " error=" & res.error)
     if not res.success:
       raise newException(CatchableError, "failed to load model " & models[0].id & ": " & res.error)
     return models[0].id
   raise newException(CatchableError, "no models available")
 
-proc getOrCreateChatSession(s: AppState, convId: int64): LlamaSession =
+proc getOrCreateChatSession(s: AppState, convId: int64): Future[LlamaSession] {.async.} =
   if s.chatSessions.hasKey(convId):
     return s.chatSessions[convId]
-  let model = pickChatModel(s)
+  let model = await pickChatModel(s)
   result = newLlamaSession(s.db, s.router, convId, none(int64), model, "chat", 8192)
   s.chatSessions[convId] = result
 
-proc switchChatModel(s: AppState, convId: int64, modelId: string): ModelOpResult =
+proc switchChatModel(s: AppState, convId: int64, modelId: string): Future[ModelOpResult] {.async.} =
   ## Unloads whatever the router reports as currently loaded (if different
   ## from the target) before loading the requested one, since the
   ## router/GPU may not have room to keep both loaded at once. This checks
@@ -406,12 +528,17 @@ proc switchChatModel(s: AppState, convId: int64, modelId: string): ModelOpResult
   ## /models page). Returns a failed `ModelOpResult` (without touching the
   ## cached session) if the load fails, so a failed switch doesn't silently
   ## strand the conversation on a half-switched state.
-  for m in s.router.listModels():
+  if s.pm != nil: s.pm.logAppend("load requested model=" & modelId & " (chat model switch)")
+  let currentModels = await s.router.listModels()
+  for m in currentModels:
     if m.status == msvLoaded and m.id != modelId:
-      let unloadRes = s.router.unloadModel(m.id)
+      let unloadRes = await s.router.unloadModel(m.id)
+      if s.pm != nil: s.pm.logAppend("unload (pre-load) model=" & m.id & " success=" & $unloadRes.success & " error=" & unloadRes.error)
       if not unloadRes.success:
         logError("router", "unload " & m.id & " before switching to " & modelId & " failed: " & unloadRes.error)
-  let loadRes = s.router.loadModel(modelId)
+  let loadRes = await s.router.loadModel(modelId)
+  noteLoadAttempt(s, modelId)
+  if s.pm != nil: s.pm.logAppend("load result model=" & modelId & " success=" & $loadRes.success & " error=" & loadRes.error)
   if not loadRes.success:
     return loadRes
   s.chatSessions[convId] = newLlamaSession(s.db, s.router, convId, none(int64), modelId, "chat", 8192)
@@ -423,7 +550,7 @@ proc chatModelPost*(ctx: Context) {.async, gcsafe.} =
   let payload = parseJson(ctx.request.body)
   let modelId = payload{"model"}.getStr("")
   try:
-    let res = switchChatModel(s, convId, modelId)
+    let res = await switchChatModel(s, convId, modelId)
     if res.success:
       logInfo("routes", "conversation " & $convId & " switched to model " & modelId)
       resp jsonResponse(%*{"success": true})
@@ -437,7 +564,7 @@ proc chatModelPost*(ctx: Context) {.async, gcsafe.} =
 const titleGenThreshold = 3 ## generate a topic title once a conversation reaches this many messages
 
 proc maybeGenerateTitle(s: AppState, convId: int64, sess: LlamaSession,
-                         history: seq[(string, string)]): Option[string] =
+                         history: seq[(string, string)]): Future[Option[string]] {.async.} =
   ## After a few messages, ask the model for a short topic title and store
   ## it, replacing the default "New conversation" placeholder.
   if history.len < titleGenThreshold:
@@ -447,7 +574,8 @@ proc maybeGenerateTitle(s: AppState, convId: int64, sess: LlamaSession,
   try:
     let prompt = @[("user", "In 3-6 words, give a short topic title for this " &
                             "conversation. Reply with only the title, no punctuation.")]
-    let title = sess.sendTurn(history & prompt).strip(chars = {' ', '\n', '\t', '"', '.'})
+    let rawTitle = await sess.sendTurn(history & prompt)
+    let title = rawTitle.strip(chars = {' ', '\n', '\t', '"', '.'})
     if title.len > 0:
       s.db.updateConversationTitle(convId, title)
       return some(title)
@@ -525,7 +653,7 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
     discard s.orchestrator.appendMessage(convId, none(int64), "user", content)
     logInfo("ws", "conversation " & $convId & " user message (" & $content.len & " chars)")
     try:
-      let sess = getOrCreateChatSession(s, convId)
+      let sess = await getOrCreateChatSession(s, convId)
       var history: seq[(string, string)] = @[]
       for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId):
         if role == "reasoning":
@@ -557,8 +685,9 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
         ## upstream (router unreachable mid-stream, model crash/OOM, a
         ## malformed response, etc.) — don't silently store/show an empty
         ## assistant message, surface it as an actual error instead.
-        let reason = if reply.error.len > 0: reply.error
-                     else: "model returned an empty reply — check server logs (router may have crashed or run out of VRAM)"
+        let fallback = if reply.error.len > 0: reply.error
+                       else: "model returned an empty reply — check server logs"
+        let reason = routerAwareFailureReason(s, fallback)
         logError("ws", "conversation " & $convId & " got an EMPTY reply from the model: " & reason)
         await ws.send($(%*{"type": "error", "content": reason}))
       else:
@@ -572,12 +701,13 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
         discard s.orchestrator.appendMessage(convId, none(int64), "assistant", reply.content)
         await ws.send($(%*{"type": "assistant_message", "content": reply.content,
                            "reasoning": reply.reasoning, "cancelled": st.cancelled}))
-      let newTitle = maybeGenerateTitle(s, convId, sess, history)
+      let newTitle = await maybeGenerateTitle(s, convId, sess, history)
       if newTitle.isSome:
         await ws.send($(%*{"type": "title_updated", "title": newTitle.get()}))
     except CatchableError as e:
+      let reason = routerAwareFailureReason(s, e.msg)
       logError("ws", "conversation " & $convId & " chat turn failed: " & $e.name & ": " & e.msg)
-      await ws.send($(%*{"type": "error", "content": e.msg}))
+      await ws.send($(%*{"type": "error", "content": reason}))
   finally:
     st.generating = false
 

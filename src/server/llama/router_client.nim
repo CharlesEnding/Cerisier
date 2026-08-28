@@ -26,22 +26,45 @@ proc newRouterClient*(host: string, port: int): RouterClient =
     port: port,
   )
 
-proc get(rc: RouterClient, path: string): JsonNode =
+proc get(rc: RouterClient, path: string): Future[JsonNode] {.async.} =
   ## Uses a fresh HttpClient per call: a single reused client can end up
   ## holding a socket that llama-server has since closed, causing
   ## intermittent "Connection was closed before full request has been
-  ## made" errors. No timeout is set (see `newRouterClient`).
-  let client = newHttpClient(timeout = -1)
+  ## made" errors. No timeout is set (see `newRouterClient`). Async: this
+  ## (and every other router call) previously used the *synchronous*
+  ## `httpclient`, which blocks this whole single-threaded server for the
+  ## entire duration of the call — meaning a slow model load, or a load
+  ## that hangs until the router crashes from OOM, froze every other page
+  ## and the crash-detection supervisor loop until it returned. Using the
+  ## async client lets other requests (and the supervisor) keep running.
+  ##
+  ## Uses `request()` + reads the body ourselves instead of `getContent()`:
+  ## `getContent()` raises `HttpRequestError` on any non-2xx status *without*
+  ## exposing the response body, discarding whatever JSON error message the
+  ## router actually sent back (e.g. "400 Bad Request" with no detail). We
+  ## want that body either way, so we parse and return it regardless of
+  ## status and let the caller decide what a given status code means.
+  let client = newAsyncHttpClient()
   defer: client.close()
-  let resp = client.getContent(rc.baseUrl & path)
-  parseJson(resp)
+  let response = await client.request(rc.baseUrl & path, httpMethod = HttpGet)
+  let body = await response.body
+  logInfo("router", "GET " & path & " -> " & $response.code)
+  try:
+    parseJson(body)
+  except CatchableError:
+    raise newException(CatchableError, $response.code & ": " & body)
 
-proc postJson*(rc: RouterClient, path: string, body: JsonNode): JsonNode =
-  let client = newHttpClient(timeout = -1)
+proc postJson*(rc: RouterClient, path: string, body: JsonNode): Future[JsonNode] {.async.} =
+  let client = newAsyncHttpClient()
   defer: client.close()
   client.headers = newHttpHeaders({"Content-Type": "application/json"})
-  let resp = client.postContent(rc.baseUrl & path, $body)
-  parseJson(resp)
+  let response = await client.request(rc.baseUrl & path, httpMethod = HttpPost, body = $body)
+  let respBody = await response.body
+  logInfo("router", "POST " & path & " -> " & $response.code)
+  try:
+    parseJson(respBody)
+  except CatchableError:
+    raise newException(CatchableError, $response.code & ": " & respBody)
 
 type
   LineBuf = ref object
@@ -155,9 +178,9 @@ proc postJsonStream*(rc: RouterClient, path: string, body: JsonNode,
     result["usage"] = lastUsage
 
 
-proc health*(rc: RouterClient): bool =
+proc health*(rc: RouterClient): Future[bool] {.async.} =
   try:
-    discard rc.get("/health")
+    discard await rc.get("/health")
     true
   except CatchableError:
     false
@@ -180,8 +203,8 @@ proc modelStatusFromJson(node: JsonNode): ModelStatus =
         vision = true
   ModelStatus(id: id, status: status, supportsVision: vision, contextSize: 0)
 
-proc listModels*(rc: RouterClient): seq[ModelStatus] =
-  let root = rc.get("/models")
+proc listModels*(rc: RouterClient): Future[seq[ModelStatus]] {.async.} =
+  let root = await rc.get("/models")
   result = @[]
   let data = root{"data"}
   if data != nil and data.kind == JArray:
@@ -189,14 +212,32 @@ proc listModels*(rc: RouterClient): seq[ModelStatus] =
       result.add(modelStatusFromJson(node))
   logInfo("router", "GET /models -> " & $result.len & " model(s)")
 
-proc loadModel*(rc: RouterClient, modelId: string): ModelOpResult =
+proc extractErrorMsg(resp: JsonNode): string =
+  ## llama-server error responses aren't consistently shaped: sometimes a
+  ## flat `{"error": "..."}` string, sometimes OpenAI-style nested
+  ## `{"error": {"message": "...", "type": "...", "code": ...}}`. Handle
+  ## both instead of silently returning "" when `error` is an object.
+  let errNode = resp{"error"}
+  if errNode != nil:
+    if errNode.kind == JString:
+      return errNode.getStr("")
+    elif errNode.kind == JObject:
+      let msg = errNode{"message"}.getStr("")
+      let typ = errNode{"type"}.getStr("")
+      if msg.len > 0 or typ.len > 0:
+        return (if msg.len > 0: msg else: "") & (if typ.len > 0: " (" & typ & ")" else: "")
+  result = resp{"message"}.getStr(resp{"detail"}.getStr(""))
+
+proc loadModel*(rc: RouterClient, modelId: string): Future[ModelOpResult] {.async.} =
   let body = %*{"model": modelId}
   try:
-    let resp = rc.postJson("/models/load", body)
+    let resp = await rc.postJson("/models/load", body)
     let success = resp{"success"}.getBool(false)
     var errMsg = ""
     if not success:
-      errMsg = resp{"error"}.getStr(resp{"message"}.getStr(resp{"detail"}.getStr("router declined to load model (no reason given)")))
+      errMsg = extractErrorMsg(resp)
+      if errMsg.len == 0:
+        errMsg = "router declined to load model (no reason given): " & $resp
     result = ModelOpResult(success: success, error: errMsg)
   except CatchableError as e:
     result = ModelOpResult(success: false, error: e.msg)
@@ -205,14 +246,16 @@ proc loadModel*(rc: RouterClient, modelId: string): ModelOpResult =
   else:
     logError("router", "POST /models/load model=" & modelId & " failed: " & result.error)
 
-proc unloadModel*(rc: RouterClient, modelId: string): ModelOpResult =
+proc unloadModel*(rc: RouterClient, modelId: string): Future[ModelOpResult] {.async.} =
   let body = %*{"model": modelId}
   try:
-    let resp = rc.postJson("/models/unload", body)
+    let resp = await rc.postJson("/models/unload", body)
     let success = resp{"success"}.getBool(false)
     var errMsg = ""
     if not success:
-      errMsg = resp{"error"}.getStr(resp{"message"}.getStr(resp{"detail"}.getStr("router declined to unload model (no reason given)")))
+      errMsg = extractErrorMsg(resp)
+      if errMsg.len == 0:
+        errMsg = "router declined to unload model (no reason given): " & $resp
     result = ModelOpResult(success: success, error: errMsg)
   except CatchableError as e:
     result = ModelOpResult(success: false, error: e.msg)
@@ -221,6 +264,6 @@ proc unloadModel*(rc: RouterClient, modelId: string): ModelOpResult =
   else:
     logError("router", "POST /models/unload model=" & modelId & " failed: " & result.error)
 
-proc props*(rc: RouterClient, modelId: string = ""): JsonNode =
+proc props*(rc: RouterClient, modelId: string = ""): Future[JsonNode] {.async.} =
   let path = if modelId.len > 0: "/props?model=" & encodeUrl(modelId) else: "/props"
-  rc.get(path)
+  await rc.get(path)

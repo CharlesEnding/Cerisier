@@ -134,15 +134,20 @@ function connectChat(conversationId) {
       })
         .then((r) => r.json())
         .then((data) => {
-          modelSelect.disabled = false;
           if (!data.success) {
+            modelSelect.disabled = false;
             modelSelect.value = previousValue;
             const div = document.createElement('div');
             div.className = 'msg error';
             div.textContent = `Failed to switch model: ${data.error || 'unknown error'}`;
             log.appendChild(div);
             log.scrollTop = log.scrollHeight;
+            return;
           }
+          // Accepted doesn't mean loaded — a too-big model can crash the
+          // router seconds later, after this response already came back.
+          // Poll until it's actually loaded or the router reports trouble.
+          pollChatModelOutcome(requested, previousValue, modelSelect, log);
         })
         .catch((err) => {
           modelSelect.disabled = false;
@@ -160,6 +165,80 @@ function connectChat(conversationId) {
 // Models page: Load/Unload buttons are plain buttons (not form submits) so
 // we can show inline success/error feedback without a page reload on
 // failure (a failed load previously looked identical to a successful one).
+//
+// The router's /models/load response only means "request accepted" — with
+// a model too big for VRAM, the router can accept the request and then
+// crash a few seconds later while actually loading it, well after this
+// fetch already resolved successfully. So a successful POST starts a poll
+// loop (checking both the router's crash state and the model's own status)
+// instead of immediately declaring victory. Polls indefinitely (no
+// timeout/give-up): a load can legitimately take a long time, and the
+// only two real outcomes are "it loaded" or "the router crashed/stopped",
+// both of which this keeps watching for.
+const MODEL_POLL_INTERVAL_MS = 1000;
+
+function pollChatModelOutcome(model, previousValue, modelSelect, log) {
+  const tick = () => {
+    Promise.all([
+      fetch('/router/status.json').then((r) => r.json()).catch(() => null),
+      fetch('/models/status.json').then((r) => r.json()).catch(() => null),
+    ]).then(([routerStatus, modelsStatus]) => {
+      if (routerStatus && (routerStatus.state === 'crashed' || routerStatus.state === 'stopped')) {
+        modelSelect.disabled = false;
+        modelSelect.value = previousValue;
+        const div = document.createElement('div');
+        div.className = 'msg error';
+        const reason = routerStatus.lastCrashReason || routerStatus.state;
+        div.textContent = `Failed to switch model: router ${routerStatus.state} (${reason}) — see Router page`;
+        log.appendChild(div);
+        log.scrollTop = log.scrollHeight;
+        return;
+      }
+      if (modelsStatus && modelsStatus.success) {
+        const entry = modelsStatus.models.find((m) => m.id === model);
+        if (entry && entry.status === 'loaded') {
+          modelSelect.disabled = false;
+          return;
+        }
+      }
+      setTimeout(tick, MODEL_POLL_INTERVAL_MS);
+    });
+  };
+  setTimeout(tick, MODEL_POLL_INTERVAL_MS);
+}
+
+function pollModelOutcome(model, isLoad, msgSpan, btn) {
+  const tick = () => {
+    Promise.all([
+      fetch('/router/status.json').then((r) => r.json()).catch(() => null),
+      fetch('/models/status.json').then((r) => r.json()).catch(() => null),
+    ]).then(([routerStatus, modelsStatus]) => {
+      if (routerStatus && (routerStatus.state === 'crashed' || routerStatus.state === 'stopped')) {
+        btn.disabled = false;
+        if (msgSpan) {
+          const reason = routerStatus.lastCrashReason || routerStatus.state;
+          msgSpan.textContent = `error: router ${routerStatus.state} (${reason}) — see Router page`;
+        }
+        return;
+      }
+      if (modelsStatus && modelsStatus.success) {
+        const entry = modelsStatus.models.find((m) => m.id === model);
+        const status = entry ? entry.status : null;
+        if (isLoad && status === 'loaded') {
+          location.reload();
+          return;
+        }
+        if (!isLoad && (status === 'unloaded' || !entry)) {
+          location.reload();
+          return;
+        }
+      }
+      setTimeout(tick, MODEL_POLL_INTERVAL_MS);
+    });
+  };
+  setTimeout(tick, MODEL_POLL_INTERVAL_MS);
+}
+
 function initModelsPage() {
   const table = document.getElementById('models-table');
   if (!table) return;
@@ -179,11 +258,13 @@ function initModelsPage() {
     })
       .then((r) => r.json())
       .then((data) => {
-        btn.disabled = false;
         if (data.success) {
-          location.reload();
-        } else if (msgSpan) {
-          msgSpan.textContent = `error: ${data.error || 'unknown error'}`;
+          // Request accepted — keep polling until the real outcome (loaded,
+          // or the router crashed trying) is known.
+          pollModelOutcome(model, isLoad, msgSpan, btn);
+        } else {
+          btn.disabled = false;
+          if (msgSpan) msgSpan.textContent = `error: ${data.error || 'unknown error'}`;
         }
       })
       .catch((err) => {
@@ -192,6 +273,7 @@ function initModelsPage() {
       });
   });
 }
+
 
 document.addEventListener('DOMContentLoaded', initModelsPage);
 

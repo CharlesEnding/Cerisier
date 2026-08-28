@@ -132,3 +132,14 @@ button { cursor: pointer; }
   border-radius: 6px;
   margin-bottom: 1rem;
 }
+#router-log {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.8rem;
+  max-height: 60vh;
+  overflow-y: auto;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

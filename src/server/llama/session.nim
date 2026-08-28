@@ -56,12 +56,12 @@ proc buildChatRequest(model: string, messages: seq[(string, string)], stream: bo
     msgs.add(%*{"role": role, "content": content})
   %*{"model": model, "messages": msgs, "stream": stream}
 
-proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): string =
+proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): Future[string] {.async.} =
   ## Sends a full-history chat turn to the router and returns the assistant
   ## text. Records token usage from the `usage` field. Raises on transport
   ## error — callers should catch when no router is reachable.
   let body = buildChatRequest(session.model, messages, stream = false)
-  let resp = session.router.postJson("/v1/chat/completions", body)
+  let resp = await session.router.postJson("/v1/chat/completions", body)
   let usage = resp{"usage"}
   if usage != nil:
     session.recordUsage(usage{"prompt_tokens"}.getInt(session.promptTokens),
@@ -113,13 +113,13 @@ proc summarizePrompt(): string =
   "decisions needed to continue the task. This summary will seed a fresh " &
   "context window."
 
-proc summarizeAndContinue*(session: LlamaSession, history: seq[(string, string)]): string =
+proc summarizeAndContinue*(session: LlamaSession, history: seq[(string, string)]): Future[string] {.async.} =
   ## Asks the model to summarize `history`, closes this session, and returns
   ## the summary text so the caller can open a fresh LlamaSession seeded
   ## with it.
   var req = history
   req.add(("user", summarizePrompt()))
-  let summary = session.sendTurn(req)
+  let summary = await session.sendTurn(req)
   session.db.closeSession(session.id, "closed")
   session.status = ssClosed
   summary
