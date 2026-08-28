@@ -14,10 +14,11 @@ when isMainModule:
   let root = getAppDir().parentDir().parentDir() # src/server -> project root
   let cfg = config.loadConfig(root)
   ensureDirs(cfg)
-  ensurePresetsFile(cfg.presetsPath, cfg.modelsDir)
 
   let db = database.open(cfg.dbPath)
   db.migrate()
+
+  ensurePresetsFile(db, cfg.presetsPath, cfg.modelsDir)
 
   let router = newRouterClient(cfg.llamaHost, cfg.llamaPort)
   let orchestrator = newOrchestrator(db, router)
@@ -25,7 +26,7 @@ when isMainModule:
 
   routes.state = AppState(db: db, router: router, orchestrator: orchestrator,
     staticDir: root / "web" / "static", chatSessions: initTable[int64, LlamaSession](),
-    toolRegistry: toolRegistry)
+    toolRegistry: toolRegistry, presetsPath: cfg.presetsPath)
 
   let pm = newProcessManager(cfg)
   pm.start()
@@ -45,6 +46,9 @@ when isMainModule:
   app.get("/models", modelsPage)
   app.post("/models/load", modelsLoadPost)
   app.post("/models/unload", modelsUnloadPost)
+  app.get("/models/edit/{id}", modelsEditGet)
+  app.post("/models/save", modelsSavePost)
+  app.post("/models/delete", modelsDeletePost)
   app.get("/tools", toolsPage)
   app.post("/tools/approve", toolsApprovePost)
   app.post("/tools/deny", toolsDenyPost)

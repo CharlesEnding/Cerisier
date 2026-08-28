@@ -35,13 +35,20 @@ proc newProcessManager*(cfg: Config): ProcessManager =
 
 proc routerArgs(cfg: Config): seq[string] =
   ## No `-m` on purpose: this launches llama-server in router mode.
+  ## Deliberately NOT passing `--models-dir`: our generated `--models-preset`
+  ## ini already lists every model under `modelsDir` (configured presets
+  ## plus placeholder entries for anything newly discovered — see
+  ## `ensurePresetsFile`/`discoverUnconfiguredModels`). Passing both flags
+  ## makes llama-server additionally auto-scan `modelsDir` itself and
+  ## register each model a second time under its raw folder name, which is
+  ## why `/models` used to show duplicate entries differing only in case.
   result = @[
     "--host", cfg.llamaHost,
     "--port", $cfg.llamaPort,
-    "--models-dir", cfg.modelsDir,
   ]
   if fileExists(cfg.presetsPath):
     result.add(["--models-preset", cfg.presetsPath])
+
 
 proc isAlive*(pm: ProcessManager): bool =
   pm.process.isSome and pm.process.get().running()

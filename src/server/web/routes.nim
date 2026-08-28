@@ -11,6 +11,7 @@ import ../skills/skills
 import ../formats/formats
 import ../llama/router_client
 import ../llama/session
+import ../llama/preset
 import ../agent/conversation
 import ../tools/registry
 import ../log
@@ -24,6 +25,7 @@ type
     staticDir*: string
     chatSessions*: Table[int64, LlamaSession] ## one live session per conversation, lazily created
     toolRegistry*: ToolRegistry
+    presetsPath*: string
 
 var state*: AppState
 
@@ -127,8 +129,36 @@ proc modelsPage*(ctx: Context) {.async, gcsafe.} =
   except CatchableError as e:
     logInfo("router", "listModels failed: " & e.msg)
     rows = &"<tr><td colspan=4>router unreachable: {e.msg}</td></tr>"
+  var presetRows = ""
+  for p in preset.listAllPresets(s.db):
+    let configuredLabel = if p.configured: "yes" else: "no (discovered)"
+    presetRows.add(&"""<tr><td>{p.id}</td><td>{p.modelPath}</td><td>{p.ctxSize}</td>
+      <td>{configuredLabel}</td><td>{p.loadOnStartup}</td>
+      <td>
+        <a href="/models/edit/{p.id}">Edit</a>
+        <form class="inline" method="post" action="/models/delete"><input type="hidden" name="id" value="{p.id}"><button>Delete</button></form>
+      </td></tr>""")
   let body = &"""<h1>Models</h1>
-  <table><tr><th>Model</th><th>Status</th><th>Vision</th><th>Actions</th></tr>{rows}</table>"""
+  <table><tr><th>Model</th><th>Status</th><th>Vision</th><th>Actions</th></tr>{rows}</table>
+  <h2>Presets</h2>
+  <p>Stored in the database; edited here and rendered into <code>models-preset.ini</code> for llama-server's router mode. Requires a router restart to take effect.</p>
+  <table><tr><th>Id</th><th>Model path</th><th>Ctx</th><th>Configured</th><th>Load on startup</th><th>Actions</th></tr>{presetRows}</table>
+  <h2>New preset</h2>
+  <form method="post" action="/models/save">
+    <p>Id: <input name="id"></p>
+    <p>Model path: <input name="model_path" size="60"></p>
+    <p>Mmproj path: <input name="mmproj_path" size="60"></p>
+    <p>Ctx size: <input name="ctx_size" value="65536"></p>
+    <p>N GPU layers: <input name="n_gpu_layers" value="999"></p>
+    <p>Chat template kwargs (JSON): <input name="chat_template_kwargs" value='{{"reasoning_effort":"medium"}}' size="40"></p>
+    <p>Temperature: <input name="temperature" value="1.0"></p>
+    <p>Top-p: <input name="top_p" value="0.95"></p>
+    <p>Top-k: <input name="top_k" value="20"></p>
+    <p>Min-p: <input name="min_p" value="0.0"></p>
+    <p>Presence penalty: <input name="presence_penalty" value="0.0"></p>
+    <p>Load on startup: <input type="checkbox" name="load_on_startup" value="1"></p>
+    <p><button type="submit">Save</button></p>
+  </form>"""
   resp htmlResponse(page("Models", "/models", body))
 
 
@@ -147,6 +177,67 @@ proc modelsUnloadPost*(ctx: Context) {.async, gcsafe.} =
     discard s.router.unloadModel(model)
   except CatchableError: discard
   resp redirect("/models")
+
+proc modelsEditGet*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  let id = ctx.getPathParams("id")
+  let existing = database.getModelPreset(s.db, id)
+  if existing.isNone:
+    resp redirect("/models")
+    return
+  let p = existing.get()
+  let checked = if p.loadOnStartup: "checked" else: ""
+  let body = &"""<h1>Edit preset: {p.id}</h1>
+  <form method="post" action="/models/save">
+    <input type="hidden" name="id" value="{p.id}">
+    <p>Model path: <input name="model_path" value="{p.modelPath}" size="60"></p>
+    <p>Mmproj path: <input name="mmproj_path" value="{p.mmprojPath}" size="60"></p>
+    <p>Ctx size: <input name="ctx_size" value="{p.ctxSize}"></p>
+    <p>N GPU layers: <input name="n_gpu_layers" value="{p.nGpuLayers}"></p>
+    <p>Chat template kwargs (JSON): <input name="chat_template_kwargs" value='{p.chatTemplateKwargs}' size="40"></p>
+    <p>Temperature: <input name="temperature" value="{p.temperature}"></p>
+    <p>Top-p: <input name="top_p" value="{p.topP}"></p>
+    <p>Top-k: <input name="top_k" value="{p.topK}"></p>
+    <p>Min-p: <input name="min_p" value="{p.minP}"></p>
+    <p>Presence penalty: <input name="presence_penalty" value="{p.presencePenalty}"></p>
+    <p>Load on startup: <input type="checkbox" name="load_on_startup" value="1" {checked}></p>
+    <p><button type="submit">Save</button></p>
+  </form>"""
+  resp htmlResponse(page("Edit preset", "/models", body))
+
+proc modelsSavePost*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  let id = ctx.getFormParams("id").strip()
+  if id.len == 0:
+    resp redirect("/models")
+    return
+  let row: ModelPresetRow = (
+    id: id,
+    modelPath: ctx.getFormParams("model_path"),
+    mmprojPath: ctx.getFormParams("mmproj_path"),
+    ctxSize: parseInt(ctx.getFormParams("ctx_size")),
+    nGpuLayers: ctx.getFormParams("n_gpu_layers"),
+    chatTemplateKwargs: ctx.getFormParams("chat_template_kwargs"),
+    temperature: parseFloat(ctx.getFormParams("temperature")),
+    topP: parseFloat(ctx.getFormParams("top_p")),
+    topK: parseInt(ctx.getFormParams("top_k")),
+    minP: parseFloat(ctx.getFormParams("min_p")),
+    presencePenalty: parseFloat(ctx.getFormParams("presence_penalty")),
+    loadOnStartup: ctx.getFormParams("load_on_startup") == "1",
+    configured: true,
+  )
+  database.upsertModelPreset(s.db, row)
+  preset.regeneratePresetsFile(s.db, s.presetsPath)
+  resp redirect("/models")
+
+proc modelsDeletePost*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  let id = ctx.getFormParams("id")
+  database.deleteModelPreset(s.db, id)
+  preset.regeneratePresetsFile(s.db, s.presetsPath)
+  resp redirect("/models")
+
+
 
 # ---------------- Tools (existing tools available to the agent) ----------------
 

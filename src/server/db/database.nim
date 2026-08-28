@@ -86,6 +86,23 @@ proc migrate*(db: Database) =
       description TEXT NOT NULL DEFAULT ''
     );
   """)
+  db.conn.exec(sql"""
+    CREATE TABLE IF NOT EXISTS model_presets (
+      id TEXT PRIMARY KEY,
+      model_path TEXT NOT NULL DEFAULT '',
+      mmproj_path TEXT NOT NULL DEFAULT '',
+      ctx_size INTEGER NOT NULL DEFAULT 65536,
+      n_gpu_layers TEXT NOT NULL DEFAULT '999',
+      chat_template_kwargs TEXT NOT NULL DEFAULT '',
+      temperature REAL NOT NULL DEFAULT 1.0,
+      top_p REAL NOT NULL DEFAULT 0.95,
+      top_k INTEGER NOT NULL DEFAULT 20,
+      min_p REAL NOT NULL DEFAULT 0.0,
+      presence_penalty REAL NOT NULL DEFAULT 0.0,
+      load_on_startup INTEGER NOT NULL DEFAULT 0,
+      configured INTEGER NOT NULL DEFAULT 0
+    );
+  """)
 
 # ---- conversations ----
 
@@ -201,3 +218,76 @@ proc listFormats*(db: Database): seq[(int64, string, string, string)] =
 
 proc deleteFormat*(db: Database, id: int64) =
   db.conn.exec(sql"DELETE FROM formats WHERE id = ?", id)
+
+# ---- model presets ----
+
+type
+  ModelPresetRow* = tuple
+    id: string
+    modelPath: string
+    mmprojPath: string
+    ctxSize: int
+    nGpuLayers: string
+    chatTemplateKwargs: string
+    temperature: float
+    topP: float
+    topK: int
+    minP: float
+    presencePenalty: float
+    loadOnStartup: bool
+    configured: bool
+
+proc upsertModelPreset*(db: Database, p: ModelPresetRow) =
+  db.conn.exec(sql"""
+    INSERT INTO model_presets
+      (id, model_path, mmproj_path, ctx_size, n_gpu_layers, chat_template_kwargs,
+       temperature, top_p, top_k, min_p, presence_penalty, load_on_startup, configured)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      model_path=excluded.model_path, mmproj_path=excluded.mmproj_path,
+      ctx_size=excluded.ctx_size, n_gpu_layers=excluded.n_gpu_layers,
+      chat_template_kwargs=excluded.chat_template_kwargs, temperature=excluded.temperature,
+      top_p=excluded.top_p, top_k=excluded.top_k, min_p=excluded.min_p,
+      presence_penalty=excluded.presence_penalty, load_on_startup=excluded.load_on_startup,
+      configured=excluded.configured
+    """, p.id, p.modelPath, p.mmprojPath, p.ctxSize, p.nGpuLayers, p.chatTemplateKwargs,
+    p.temperature, p.topP, p.topK, p.minP, p.presencePenalty, ord(p.loadOnStartup), ord(p.configured))
+
+proc rowToModelPreset(row: seq[string]): ModelPresetRow =
+  (
+    id: row[0],
+    modelPath: row[1],
+    mmprojPath: row[2],
+    ctxSize: parseInt(row[3]),
+    nGpuLayers: row[4],
+    chatTemplateKwargs: row[5],
+    temperature: parseFloat(row[6]),
+    topP: parseFloat(row[7]),
+    topK: parseInt(row[8]),
+    minP: parseFloat(row[9]),
+    presencePenalty: parseFloat(row[10]),
+    loadOnStartup: row[11] != "0",
+    configured: row[12] != "0",
+  )
+
+const modelPresetCols = """id, model_path, mmproj_path, ctx_size, n_gpu_layers, chat_template_kwargs,
+      temperature, top_p, top_k, min_p, presence_penalty, load_on_startup, configured"""
+
+proc listModelPresets*(db: Database): seq[ModelPresetRow] =
+  result = @[]
+  for row in db.conn.fastRows(sql("SELECT " & modelPresetCols & " FROM model_presets ORDER BY id ASC")):
+    result.add(rowToModelPreset(row))
+
+proc getModelPreset*(db: Database, id: string): Option[ModelPresetRow] =
+  for row in db.conn.fastRows(sql("SELECT " & modelPresetCols & " FROM model_presets WHERE id = ?"), id):
+    return some(rowToModelPreset(row))
+  none(ModelPresetRow)
+
+proc countModelPresets*(db: Database): int64 =
+  for row in db.conn.fastRows(sql"SELECT COUNT(*) FROM model_presets"):
+    return parseBiggestInt(row[0])
+  0
+
+proc deleteModelPreset*(db: Database, id: string) =
+  db.conn.exec(sql"DELETE FROM model_presets WHERE id = ?", id)
+
