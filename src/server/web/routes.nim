@@ -12,6 +12,7 @@ import ../formats/formats
 import ../llama/router_client
 import ../llama/session
 import ../agent/conversation
+import ../tools/registry
 import ../log
 import ../../common/types
 
@@ -22,6 +23,7 @@ type
     orchestrator*: ConversationOrchestrator
     staticDir*: string
     chatSessions*: Table[int64, LlamaSession] ## one live session per conversation, lazily created
+    toolRegistry*: ToolRegistry
 
 var state*: AppState
 
@@ -143,20 +145,16 @@ proc modelsUnloadPost*(ctx: Context) {.async, gcsafe.} =
   except CatchableError: discard
   resp redirect("/models")
 
-# ---------------- Tools (+ approval queue) ----------------
+# ---------------- Tools (existing tools available to the agent) ----------------
 
 proc toolsPage*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
   var rows = ""
-  for (id, messageId, toolName, location, argsJson) in s.db.pendingToolCalls():
-    rows.add(&"""<tr class="pending"><td>{id}</td><td>{toolName}</td><td>{location}</td><td><code>{argsJson}</code></td>
-      <td>
-        <form class="inline" method="post" action="/tools/approve"><input type="hidden" name="id" value="{id}"><button>Approve</button></form>
-        <form class="inline" method="post" action="/tools/deny"><input type="hidden" name="id" value="{id}"><button>Deny</button></form>
-      </td></tr>""")
-  let body = &"""<h1>Tools — Pending Approval</h1>
-  <p>Tool calls awaiting approval are listed here. Approve or deny each one; approved calls run and their result is posted back into the conversation.</p>
-  <table><tr><th>#</th><th>Tool</th><th>Location</th><th>Args</th><th>Action</th></tr>{rows}</table>"""
+  for t in s.toolRegistry.tools:
+    rows.add(&"""<tr><td>{t.name}</td><td>{t.description}</td><td>{t.kind}</td><td>{t.location}</td><td><code>{t.entrypoint}</code></td><td>{t.autoRun}</td></tr>""")
+  let body = &"""<h1>Tools</h1>
+  <p>Purpose-built scripts and executables available to the agent. Approval of individual tool calls happens inline in the chat, not here.</p>
+  <table><tr><th>Name</th><th>Description</th><th>Kind</th><th>Location</th><th>Entrypoint</th><th>Auto-run</th></tr>{rows}</table>"""
   resp htmlResponse(page("Tools", "/tools", body))
 
 proc toolsApprovePost*(ctx: Context) {.async, gcsafe.} =
@@ -250,10 +248,23 @@ proc getOrCreateChatSession(s: AppState, convId: int64): LlamaSession =
   result = newLlamaSession(s.db, s.router, convId, none(int64), model, "chat", 8192)
   s.chatSessions[convId] = result
 
-proc switchChatModel(s: AppState, convId: int64, modelId: string): LlamaSession =
-  discard s.router.loadModel(modelId)
-  result = newLlamaSession(s.db, s.router, convId, none(int64), modelId, "chat", 8192)
-  s.chatSessions[convId] = result
+proc switchChatModel(s: AppState, convId: int64, modelId: string): bool =
+  ## Unloads the conversation's current model (if any and different) before
+  ## loading the requested one, since the router/GPU may not have room to
+  ## keep both loaded at once. Returns false (without touching the cached
+  ## session) if the load fails, so a failed switch doesn't silently strand
+  ## the conversation on a half-switched state.
+  if s.chatSessions.hasKey(convId):
+    let oldModel = s.chatSessions[convId].model
+    if oldModel != modelId:
+      let unloaded = s.router.unloadModel(oldModel)
+      logInfo("router", "unload " & oldModel & " -> success=" & $unloaded)
+  let loaded = s.router.loadModel(modelId)
+  logInfo("router", "load " & modelId & " -> success=" & $loaded)
+  if not loaded:
+    return false
+  s.chatSessions[convId] = newLlamaSession(s.db, s.router, convId, none(int64), modelId, "chat", 8192)
+  true
 
 proc chatModelPost*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
@@ -261,11 +272,14 @@ proc chatModelPost*(ctx: Context) {.async, gcsafe.} =
   let payload = parseJson(ctx.request.body)
   let modelId = payload{"model"}.getStr("")
   try:
-    discard switchChatModel(s, convId, modelId)
-    logInfo("routes", "conversation " & $convId & " switched to model " & modelId)
-    resp jsonResponse(%*{"success": true})
+    if switchChatModel(s, convId, modelId):
+      logInfo("routes", "conversation " & $convId & " switched to model " & modelId)
+      resp jsonResponse(%*{"success": true})
+    else:
+      logInfo("routes", "conversation " & $convId & " failed to switch to model " & modelId & " (router declined load)")
+      resp jsonResponse(%*{"success": false, "error": "router declined to load model " & modelId})
   except CatchableError as e:
-    logInfo("routes", "model switch failed: " & e.msg)
+    logInfo("routes", "model switch failed: " & $e.name & ": " & e.msg)
     resp jsonResponse(%*{"success": false, "error": e.msg})
 
 const titleGenThreshold = 3 ## generate a topic title once a conversation reaches this many messages
@@ -286,50 +300,81 @@ proc maybeGenerateTitle(s: AppState, convId: int64, sess: LlamaSession,
       s.db.updateConversationTitle(convId, title)
       return some(title)
   except CatchableError as e:
-    logInfo("routes", "title generation failed: " & e.msg)
+    logInfo("routes", "title generation failed: " & $e.name & ": " & e.msg)
   none(string)
+
+type
+  ChatTurnState = ref object
+    ## Heap-allocated shared state for one WebSocket connection's in-flight
+    ## turn. Deliberately NOT captured as plain `var` locals closed over by
+    ## a nested async proc: nested async closures over outer-proc locals
+    ## have triggered segfaults on this toolchain, so the mutable state
+    ## lives on its own ref object instead and every callback closes over
+    ## that ref (safe) rather than the enclosing proc's stack frame.
+    generating: bool
+    cancelled: bool
+
+proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
+                        st: ChatTurnState, content: string) {.async, gcsafe.} =
+  st.generating = true
+  st.cancelled = false
+  try:
+    discard s.orchestrator.appendMessage(convId, none(int64), "user", content)
+    logInfo("ws", "conversation " & $convId & " user message (" & $content.len & " chars)")
+    try:
+      let sess = getOrCreateChatSession(s, convId)
+      var history: seq[(string, string)] = @[]
+      for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId):
+        history.add((role, msgContent))
+      logInfo("router", "sendTurn model=" & sess.model & " messages=" & $history.len)
+      let onToken = proc(tok: string): Future[void] {.gcsafe.} =
+        ws.send($(%*{"type": "assistant_token", "content": tok}))
+      let isCancelled = proc(): bool {.gcsafe.} =
+        st.cancelled
+      let reply = await sess.sendTurnStreaming(history, onToken, isCancelled)
+      if reply.len == 0:
+        logInfo("ws", "conversation " & $convId & " got an EMPTY reply from the model (cancelled=" & $st.cancelled & ")")
+      else:
+        logInfo("router", "sendTurn reply (" & $reply.len & " chars, cancelled=" & $st.cancelled & ")")
+      discard s.orchestrator.appendMessage(convId, none(int64), "assistant", reply)
+      await ws.send($(%*{"type": "assistant_message", "content": reply, "cancelled": st.cancelled}))
+      let newTitle = maybeGenerateTitle(s, convId, sess, history)
+      if newTitle.isSome:
+        await ws.send($(%*{"type": "title_updated", "title": newTitle.get()}))
+    except CatchableError as e:
+      logInfo("ws", "conversation " & $convId & " chat turn failed: " & $e.name & ": " & e.msg)
+      await ws.send($(%*{"type": "assistant_message", "content": "(error: " & e.msg & ")"}))
+  finally:
+    st.generating = false
 
 proc wsChat*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
-  let convId = parseInt(ctx.getPathParams("id"))
+  let convId = parseInt(ctx.getPathParams("id")).int64
   var ws = await newWebSocket(ctx)
-  var cancelled = false
+  let st = ChatTurnState(generating: false, cancelled: false)
   while ws.readyState == Open:
     try:
       let packet = await ws.receiveStrPacket()
       let node = parseJson(packet)
       let msgType = node{"type"}.getStr("")
-      if msgType == "cancel_generation":
-        cancelled = true
-      elif msgType == "user_message":
-        let content = node{"content"}.getStr("")
-        discard s.orchestrator.appendMessage(convId.int64, none(int64), "user", content)
-        logInfo("ws", "conversation " & $convId & " user message (" & $content.len & " chars)")
-        try:
-          let sess = getOrCreateChatSession(s, convId.int64)
-          var history: seq[(string, string)] = @[]
-          for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId.int64):
-            history.add((role, msgContent))
-          logInfo("router", "sendTurn model=" & sess.model & " messages=" & $history.len)
-          cancelled = false
-          let onToken = proc(tok: string) {.gcsafe.} =
-            {.cast(gcsafe).}:
-              waitFor ws.send($(%*{"type": "assistant_token", "content": tok}))
-          let isCancelled = proc(): bool {.gcsafe.} =
-            {.cast(gcsafe).}:
-              cancelled
-          let reply = sess.sendTurnStreaming(history, onToken, isCancelled)
-          logInfo("router", "sendTurn reply (" & $reply.len & " chars)")
-          discard s.orchestrator.appendMessage(convId.int64, none(int64), "assistant", reply)
-          await ws.send($(%*{"type": "assistant_message", "content": reply, "cancelled": cancelled}))
-          let newTitle = maybeGenerateTitle(s, convId.int64, sess, history)
-          if newTitle.isSome:
-            await ws.send($(%*{"type": "title_updated", "title": newTitle.get()}))
-        except CatchableError as e:
-          logInfo("ws", "chat turn failed: " & e.msg)
-          await ws.send($(%*{"type": "assistant_message", "content": "(error: " & e.msg & ")"}))
+      case msgType
+      of "cancel_generation":
+        if st.generating:
+          st.cancelled = true
+          logInfo("ws", "conversation " & $convId & " cancel requested")
+        else:
+          logInfo("ws", "conversation " & $convId & " cancel requested but nothing is generating")
+      of "user_message":
+        if st.generating:
+          logInfo("ws", "conversation " & $convId & " rejected user message: a reply is already in progress")
+          await ws.send($(%*{"type": "assistant_message", "content": "(a reply is already being generated — please wait)"}))
+        else:
+          let content = node{"content"}.getStr("")
+          asyncCheck handleUserMessage(s, convId, ws, st, content)
+      else:
+        logInfo("ws", "conversation " & $convId & " unknown message type: " & msgType)
     except WebSocketError:
       break
     except CatchableError as e:
-      logInfo("ws", "unexpected error: " & e.msg)
+      logInfo("ws", "conversation " & $convId & " unexpected error: " & $e.name & ": " & e.msg)
       break

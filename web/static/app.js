@@ -11,10 +11,14 @@ function connectChat(conversationId) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${proto}//${location.host}/ws/chat/${conversationId}`);
   const stopBtn = document.getElementById('stop-btn');
+  const input = document.getElementById('chat-input');
+  const sendBtn = document.querySelector('#chat-form button[type="submit"]');
   let streamingDiv = null;
 
   function setGenerating(isGenerating) {
     if (stopBtn) stopBtn.style.display = isGenerating ? '' : 'none';
+    if (input) input.disabled = isGenerating;
+    if (sendBtn) sendBtn.disabled = isGenerating;
   }
 
   ws.onmessage = (ev) => {
@@ -24,7 +28,6 @@ function connectChat(conversationId) {
         streamingDiv = document.createElement('div');
         streamingDiv.className = 'msg';
         log.appendChild(streamingDiv);
-        setGenerating(true);
       }
       streamingDiv.textContent += data.content;
       log.scrollTop = log.scrollHeight;
@@ -55,11 +58,11 @@ function connectChat(conversationId) {
   if (form) {
     form.addEventListener('submit', (e) => {
       e.preventDefault();
-      const input = document.getElementById('chat-input');
-      if (!input.value.trim()) return;
+      if (!input.value.trim() || input.disabled) return;
       ws.send(JSON.stringify({type: 'user_message', content: input.value}));
       appendEvent(log, {type: 'user_message', content: input.value});
       input.value = '';
+      setGenerating(true);
     });
   }
 

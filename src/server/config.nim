@@ -15,6 +15,7 @@ type
     dbPath*: string
     llamaHost*: string          ## host/port the router listens on (loopback)
     llamaPort*: int
+    toolsDir*: string            ## directory of *.tool.json manifests for locally/remotely runnable tools
 
 proc defaultConfig*(root: string): Config =
   result = Config(
@@ -27,6 +28,7 @@ proc defaultConfig*(root: string): Config =
     dbPath: root / "data" / "cerisier.db",
     llamaHost: "127.0.0.1",
     llamaPort: 8081,
+    toolsDir: root / "tools",
   )
 
 proc parseSimpleKv(path: string): Table[string, string] =
@@ -61,6 +63,7 @@ proc loadConfig*(root: string, configPath: string = ""): Config =
     of "db_path": result.dbPath = value
     of "llama_host": result.llamaHost = value
     of "llama_port": result.llamaPort = parseInt(value)
+    of "tools_dir": result.toolsDir = value
     else: discard
 
 proc ensureDirs*(cfg: Config) =

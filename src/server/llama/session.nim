@@ -6,7 +6,7 @@
 ## actual HTTP call is isolated in `sendTurn`, which callers may choose not
 ## to invoke (e.g. when there's no router running, as on this dev machine).
 
-import std/[json, options]
+import std/[json, options, asyncdispatch]
 import ./router_client
 import ../db/database
 
@@ -74,14 +74,14 @@ proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): string =
     result = ""
 
 proc sendTurnStreaming*(session: LlamaSession, messages: seq[(string, string)],
-                         onToken: proc(tok: string) {.gcsafe.},
-                         isCancelled: proc(): bool {.gcsafe.}): string =
+                         onToken: proc(tok: string): Future[void] {.gcsafe.},
+                         isCancelled: proc(): bool {.gcsafe.}): Future[string] {.async, gcsafe.} =
   ## Like `sendTurn`, but streams the assistant reply token-by-token via
-  ## `onToken` as it's generated, and can be aborted early by `isCancelled`.
-  ## Whatever text was accumulated so far (full or partial, if cancelled)
-  ## is recorded as the turn and returned.
+  ## `onToken` (awaited for each chunk) as it's generated, and can be
+  ## aborted early by `isCancelled`. Whatever text was accumulated so far
+  ## (full or partial, if cancelled) is recorded as the turn and returned.
   let body = buildChatRequest(session.model, messages, stream = true)
-  let resp = session.router.postJsonStream("/v1/chat/completions", body, onToken, isCancelled)
+  let resp = await session.router.postJsonStream("/v1/chat/completions", body, onToken, isCancelled)
   let usage = resp{"usage"}
   if usage != nil:
     session.recordUsage(usage{"prompt_tokens"}.getInt(session.promptTokens),

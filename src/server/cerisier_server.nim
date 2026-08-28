@@ -7,6 +7,7 @@ import ./config
 import ./db/database
 import ./llama/[process, preset, router_client, session]
 import ./agent/conversation
+import ./tools/registry
 import ./web/routes
 
 when isMainModule:
@@ -20,9 +21,11 @@ when isMainModule:
 
   let router = newRouterClient(cfg.llamaHost, cfg.llamaPort)
   let orchestrator = newOrchestrator(db, router)
+  let toolRegistry = newToolRegistry(cfg.toolsDir)
 
   routes.state = AppState(db: db, router: router, orchestrator: orchestrator,
-    staticDir: root / "web" / "static", chatSessions: initTable[int64, LlamaSession]())
+    staticDir: root / "web" / "static", chatSessions: initTable[int64, LlamaSession](),
+    toolRegistry: toolRegistry)
 
   let pm = newProcessManager(cfg)
   pm.start()
