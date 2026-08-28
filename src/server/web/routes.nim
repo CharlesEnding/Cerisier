@@ -2,7 +2,7 @@
 ## Every page is a normal server-rendered full page load, except the chat
 ## page's WebSocket channel which live-updates in place.
 
-import std/[asyncdispatch, json, strformat, options, strutils]
+import std/[asyncdispatch, json, strformat, options, strutils, tables, sequtils]
 import prologue
 import prologue/websocket
 import ./layout
@@ -10,7 +10,9 @@ import ../db/database
 import ../skills/skills
 import ../formats/formats
 import ../llama/router_client
+import ../llama/session
 import ../agent/conversation
+import ../log
 import ../../common/types
 
 type
@@ -19,6 +21,7 @@ type
     router*: RouterClient
     orchestrator*: ConversationOrchestrator
     staticDir*: string
+    chatSessions*: Table[int64, LlamaSession] ## one live session per conversation, lazily created
 
 var state*: AppState
 
@@ -33,14 +36,16 @@ proc staticAsset*(ctx: Context) {.async, gcsafe.} =
 
 # ---------------- Chat (the one live-updating page) ----------------
 
-proc chatPage*(ctx: Context) {.async, gcsafe.} =
+proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} =
   let s = getState()
-  var convId = s.db.listConversations()
+  let existing = s.db.listConversations()
   var currentId: int64
-  if convId.len == 0:
+  if requestedId.isSome and existing.anyIt(it[0] == requestedId.get()):
+    currentId = requestedId.get()
+  elif existing.len == 0:
     currentId = s.orchestrator.startConversation("New conversation")
   else:
-    currentId = convId[0][0]
+    currentId = existing[0][0]
   var log = ""
   for (id, parentId, role, content, createdAt) in s.db.messagesForConversation(currentId):
     log.add(&"<div class=\"msg {role}\">{content}</div>\n")
@@ -48,14 +53,27 @@ proc chatPage*(ctx: Context) {.async, gcsafe.} =
   <h1>Conversation #{currentId}</h1>
   <div id="chat-log">{log}</div>
   <form id="chat-form">
-    <input id="chat-input" type="text" placeholder="Message..." style="width:70%">
+    <input id="chat-input" type="text" placeholder="Message..." autocomplete="off">
     <button type="submit">Send</button>
   </form>
   <script>connectChat({currentId});</script>
   """
   resp htmlResponse(page("Chat", "/", body))
 
+proc chatPage*(ctx: Context) {.async, gcsafe.} =
+  logInfo("routes", "GET /")
+  await renderChatPage(ctx, none(int64))
+
+proc chatPageWithId*(ctx: Context) {.async, gcsafe.} =
+  let idStr = ctx.getPathParams("id")
+  logInfo("routes", "GET /chat/" & idStr)
+  try:
+    await renderChatPage(ctx, some(parseBiggestInt(idStr).int64))
+  except ValueError:
+    await renderChatPage(ctx, none(int64))
+
 proc historyPage*(ctx: Context) {.async, gcsafe.} =
+  logInfo("routes", "GET /history")
   let s = getState()
   var rows = ""
   for (id, title, createdAt) in s.db.listConversations():
@@ -66,20 +84,25 @@ proc historyPage*(ctx: Context) {.async, gcsafe.} =
 # ---------------- Models ----------------
 
 proc modelsPage*(ctx: Context) {.async, gcsafe.} =
+  logInfo("routes", "GET /models")
   let s = getState()
   var rows = ""
   try:
-    for m in s.router.listModels():
+    let models = s.router.listModels()
+    logInfo("router", "listModels -> " & $models.len & " model(s)")
+    for m in models:
       rows.add(&"""<tr><td>{m.id}</td><td>{m.status}</td><td>{m.supportsVision}</td>
         <td>
           <form class="inline" method="post" action="/models/load"><input type="hidden" name="model" value="{m.id}"><button>Load</button></form>
           <form class="inline" method="post" action="/models/unload"><input type="hidden" name="model" value="{m.id}"><button>Unload</button></form>
         </td></tr>""")
   except CatchableError as e:
+    logInfo("router", "listModels failed: " & e.msg)
     rows = &"<tr><td colspan=4>router unreachable: {e.msg}</td></tr>"
   let body = &"""<h1>Models</h1>
   <table><tr><th>Model</th><th>Status</th><th>Vision</th><th>Actions</th></tr>{rows}</table>"""
   resp htmlResponse(page("Models", "/models", body))
+
 
 proc modelsLoadPost*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
@@ -187,6 +210,23 @@ proc formatsNewPost*(ctx: Context) {.async, gcsafe.} =
 
 # ---------------- WebSocket: chat live updates ----------------
 
+proc pickChatModel(s: AppState): string =
+  let models = s.router.listModels()
+  for m in models:
+    if m.status == msvLoaded:
+      return m.id
+  if models.len > 0:
+    discard s.router.loadModel(models[0].id)
+    return models[0].id
+  raise newException(CatchableError, "no models available")
+
+proc getOrCreateChatSession(s: AppState, convId: int64): LlamaSession =
+  if s.chatSessions.hasKey(convId):
+    return s.chatSessions[convId]
+  let model = pickChatModel(s)
+  result = newLlamaSession(s.db, s.router, convId, none(int64), model, "chat", 8192)
+  s.chatSessions[convId] = result
+
 proc wsChat*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
   let convId = parseInt(ctx.getPathParams("id"))
@@ -198,7 +238,22 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
       if node{"type"}.getStr("") == "user_message":
         let content = node{"content"}.getStr("")
         discard s.orchestrator.appendMessage(convId.int64, none(int64), "user", content)
-        await ws.send($(%*{"type": "assistant_message",
-          "content": "(no router connected on this dev machine — message stored)"}))
+        logInfo("ws", "conversation " & $convId & " user message (" & $content.len & " chars)")
+        try:
+          let sess = getOrCreateChatSession(s, convId.int64)
+          var history: seq[(string, string)] = @[]
+          for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId.int64):
+            history.add((role, msgContent))
+          logInfo("router", "sendTurn model=" & sess.model & " messages=" & $history.len)
+          let reply = sess.sendTurn(history)
+          logInfo("router", "sendTurn reply (" & $reply.len & " chars): " & reply[0 ..< min(120, reply.len)])
+          discard s.orchestrator.appendMessage(convId.int64, none(int64), "assistant", reply)
+          await ws.send($(%*{"type": "assistant_message", "content": reply}))
+        except CatchableError as e:
+          logInfo("ws", "chat turn failed: " & e.msg)
+          await ws.send($(%*{"type": "assistant_message", "content": "(error: " & e.msg & ")"}))
     except WebSocketError:
+      break
+    except CatchableError as e:
+      logInfo("ws", "unexpected error: " & e.msg)
       break

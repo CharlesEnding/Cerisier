@@ -4,6 +4,7 @@
 ## without their leading dashes (see llama.cpp server docs).
 
 import std/[os, strformat, tables, sequtils, strutils]
+import ../log
 
 type
   ModelPreset* = object
@@ -39,6 +40,34 @@ proc defaultPresets*(): seq[ModelPreset] =
     )
   ]
 
+proc idFromPath(path: string): string =
+  splitFile(path).name.toLowerAscii().replace(" ", "-").replace("_", "-")
+
+proc scanModelsDir*(dir: string): seq[ModelPreset] =
+  ## Recursively scans `dir` for `.gguf` files and builds one preset per
+  ## model found, using sane defaults mirroring `defaultPresets`.
+  result = @[]
+  if not dirExists(dir):
+    return
+  var first = true
+  for path in walkDirRec(dir):
+    if path.toLowerAscii().endsWith(".gguf"):
+      result.add(ModelPreset(
+        id: idFromPath(path),
+        modelPath: path,
+        mmprojPath: "",
+        ctxSize: 65536,
+        nGpuLayers: "999",
+        chatTemplateKwargs: """{"reasoning_effort":"medium"}""",
+        temperature: 1.0,
+        topP: 0.95,
+        topK: 20,
+        minP: 0.0,
+        presencePenalty: 0.0,
+        loadOnStartup: first,
+      ))
+      first = false
+
 proc renderPreset(p: ModelPreset): string =
   result.add(&"[{p.id}]\n")
   result.add(&"model = {p.modelPath}\n")
@@ -62,7 +91,13 @@ proc writePresets*(path: string, presets: seq[ModelPreset]) =
   createDir(parentDir(path))
   writeFile(path, renderIni(presets))
 
-proc ensurePresetsFile*(path: string) =
-  ## Writes the default preset set if no preset file exists yet.
-  if not fileExists(path):
-    writePresets(path, defaultPresets())
+proc ensurePresetsFile*(path: string, modelsDir: string) =
+  ## Regenerates the preset file from a scan of `modelsDir` on every
+  ## startup, falling back to the hardcoded default if no models are found.
+  var presets = scanModelsDir(modelsDir)
+  if presets.len == 0:
+    logInfo("preset", "no .gguf files found under " & modelsDir & ", falling back to default preset")
+    presets = defaultPresets()
+  else:
+    logInfo("preset", "discovered " & $presets.len & " model(s) under " & modelsDir)
+  writePresets(path, presets)

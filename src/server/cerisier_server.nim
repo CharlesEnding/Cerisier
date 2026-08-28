@@ -1,11 +1,11 @@
 ## cerisier-server: Prologue web app + agent orchestrator + llama-server
 ## router supervisor. Entry point wiring all modules together.
 
-import std/[os]
+import std/[os, tables]
 import prologue
 import ./config
 import ./db/database
-import ./llama/[process, preset, router_client]
+import ./llama/[process, preset, router_client, session]
 import ./agent/conversation
 import ./web/routes
 
@@ -13,7 +13,7 @@ when isMainModule:
   let root = getAppDir().parentDir().parentDir() # src/server -> project root
   let cfg = config.loadConfig(root)
   ensureDirs(cfg)
-  ensurePresetsFile(cfg.presetsPath)
+  ensurePresetsFile(cfg.presetsPath, cfg.modelsDir)
 
   let db = database.open(cfg.dbPath)
   db.migrate()
@@ -21,7 +21,8 @@ when isMainModule:
   let router = newRouterClient(cfg.llamaHost, cfg.llamaPort)
   let orchestrator = newOrchestrator(db, router)
 
-  routes.state = AppState(db: db, router: router, orchestrator: orchestrator, staticDir: root / "web" / "static")
+  routes.state = AppState(db: db, router: router, orchestrator: orchestrator,
+    staticDir: root / "web" / "static", chatSessions: initTable[int64, LlamaSession]())
 
   let pm = newProcessManager(cfg)
   pm.start()
@@ -34,6 +35,7 @@ when isMainModule:
   ))
 
   app.get("/", chatPage)
+  app.get("/chat/{id}", chatPageWithId)
   app.get("/history", historyPage)
   app.get("/models", modelsPage)
   app.post("/models/load", modelsLoadPost)

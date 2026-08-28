@@ -6,28 +6,36 @@
 
 import std/[httpclient, json, uri, strformat]
 import ../../common/types
+import ../log
 
 type
   RouterClient* = ref object
     baseUrl: string
-    client: HttpClient
     timeoutMs: int
 
 proc newRouterClient*(host: string, port: int, timeoutMs: int = 5000): RouterClient =
   RouterClient(
     baseUrl: &"http://{host}:{port}",
-    client: newHttpClient(timeout = timeoutMs),
     timeoutMs: timeoutMs,
   )
 
 proc get(rc: RouterClient, path: string): JsonNode =
-  let resp = rc.client.getContent(rc.baseUrl & path)
+  ## Uses a fresh HttpClient per call: a single reused client can end up
+  ## holding a socket that llama-server has since closed, causing
+  ## intermittent "Connection was closed before full request has been
+  ## made" errors.
+  let client = newHttpClient(timeout = rc.timeoutMs)
+  defer: client.close()
+  let resp = client.getContent(rc.baseUrl & path)
   parseJson(resp)
 
 proc postJson*(rc: RouterClient, path: string, body: JsonNode): JsonNode =
-  rc.client.headers = newHttpHeaders({"Content-Type": "application/json"})
-  let resp = rc.client.postContent(rc.baseUrl & path, $body)
+  let client = newHttpClient(timeout = rc.timeoutMs)
+  defer: client.close()
+  client.headers = newHttpHeaders({"Content-Type": "application/json"})
+  let resp = client.postContent(rc.baseUrl & path, $body)
   parseJson(resp)
+
 
 proc health*(rc: RouterClient): bool =
   try:
@@ -61,16 +69,19 @@ proc listModels*(rc: RouterClient): seq[ModelStatus] =
   if data != nil and data.kind == JArray:
     for node in data:
       result.add(modelStatusFromJson(node))
+  logInfo("router", "GET /models -> " & $result.len & " model(s)")
 
 proc loadModel*(rc: RouterClient, modelId: string): bool =
   let body = %*{"model": modelId}
   let resp = rc.postJson("/models/load", body)
-  resp{"success"}.getBool(false)
+  result = resp{"success"}.getBool(false)
+  logInfo("router", "POST /models/load model=" & modelId & " success=" & $result)
 
 proc unloadModel*(rc: RouterClient, modelId: string): bool =
   let body = %*{"model": modelId}
   let resp = rc.postJson("/models/unload", body)
-  resp{"success"}.getBool(false)
+  result = resp{"success"}.getBool(false)
+  logInfo("router", "POST /models/unload model=" & modelId & " success=" & $result)
 
 proc props*(rc: RouterClient, modelId: string = ""): JsonNode =
   let path = if modelId.len > 0: "/props?model=" & encodeUrl(modelId) else: "/props"

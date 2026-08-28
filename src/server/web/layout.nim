@@ -29,7 +29,7 @@ proc page*(title: string, active: string, bodyHtml: string, extraHead = ""): str
   <meta charset="utf-8">
   <title>{title} — Cerisier</title>
   <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js"></script>
   {extraHead}
 </head>
 <body>
