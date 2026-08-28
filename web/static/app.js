@@ -25,6 +25,14 @@ function connectChat(conversationId) {
 
   ws.onmessage = (ev) => {
     const data = JSON.parse(ev.data);
+    handleMessage(data);
+  };
+
+  function handleMessage(data) {
+    if (data.type === 'batch') {
+      for (const item of data.items) handleMessage(item);
+      return;
+    }
     if (data.type === 'reasoning_token') {
       if (!reasoningDetails) {
         reasoningDetails = document.createElement('details');

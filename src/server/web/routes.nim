@@ -411,18 +411,25 @@ type
   TokenQueue = ref object
     ## Unbounded queue decoupling llama.cpp's token stream from the
     ## WebSocket send. `onToken`/`onReasoning` push and return immediately
-    ## (no data is ever dropped — the deque grows if the socket is slow), so
-    ## `postJsonStream`'s read loop is never blocked waiting on network I/O
-    ## for the browser. A separate `runSender` task drains the queue at
-    ## whatever pace the WebSocket allows.
-    items: Deque[string]
+    ## (no data is ever dropped), so `postJsonStream`'s read loop is never
+    ## blocked waiting on network I/O for the browser.
+    ##
+    ## `runSender` drains and sends the *entire* backlog as a single batched
+    ## WebSocket frame per cycle rather than one frame per token. Sending
+    ## one frame per token let the queue grow without bound whenever the
+    ## socket couldn't keep up with generation speed — the accumulating
+    ## deque/JsonNode garbage caused ever-longer GC pauses, which is what
+    ## made replies appear to "slow to a crawl" midway through. Batching
+    ## keeps the number of sends bounded by how fast the browser drains the
+    ## socket, not by how many tokens llama.cpp produced.
+    items: Deque[JsonNode]
     notEmpty: Future[void]
     closed: bool
 
 proc newTokenQueue(): TokenQueue =
-  TokenQueue(items: initDeque[string](), notEmpty: newFuture[void]("TokenQueue.notEmpty"), closed: false)
+  TokenQueue(items: initDeque[JsonNode](), notEmpty: newFuture[void]("TokenQueue.notEmpty"), closed: false)
 
-proc push(q: TokenQueue, item: string) =
+proc push(q: TokenQueue, item: JsonNode) =
   q.items.addLast(item)
   if not q.notEmpty.finished:
     q.notEmpty.complete()
@@ -433,10 +440,9 @@ proc closeQueue(q: TokenQueue) =
     q.notEmpty.complete()
 
 proc runSender(ws: WebSocket, q: TokenQueue): Future[void] {.async, gcsafe.} =
-  ## Drains `q` and sends each item over `ws`, in order, until the queue is
-  ## closed and empty. Runs concurrently with (never blocks) token
-  ## production: if the socket is slow, items simply pile up in the deque
-  ## instead of stalling generation.
+  ## Drains `q` and sends its current backlog as one batched frame, in
+  ## order, until the queue is closed and empty. Runs concurrently with
+  ## (never blocks) token production.
   while true:
     if q.items.len == 0:
       if q.closed:
@@ -444,9 +450,11 @@ proc runSender(ws: WebSocket, q: TokenQueue): Future[void] {.async, gcsafe.} =
       await q.notEmpty
       q.notEmpty = newFuture[void]("TokenQueue.notEmpty")
       continue
-    let item = q.items.popFirst()
+    var batch = newJArray()
+    while q.items.len > 0:
+      batch.add(q.items.popFirst())
     try:
-      await ws.send(item)
+      await ws.send($(%*{"type": "batch", "items": batch}))
     except WebSocketError:
       q.closed = true
       break
@@ -469,11 +477,11 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
       let queue = newTokenQueue()
       let senderFut = runSender(ws, queue)
       let onToken = proc(tok: string): Future[void] {.gcsafe.} =
-        queue.push($(%*{"type": "assistant_token", "content": tok}))
+        queue.push(%*{"type": "assistant_token", "content": tok})
         result = newFuture[void]("onToken")
         result.complete()
       let onReasoning = proc(tok: string): Future[void] {.gcsafe.} =
-        queue.push($(%*{"type": "reasoning_token", "content": tok}))
+        queue.push(%*{"type": "reasoning_token", "content": tok})
         result = newFuture[void]("onReasoning")
         result.complete()
       let isCancelled = proc(): bool {.gcsafe.} =
