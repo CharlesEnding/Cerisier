@@ -26,7 +26,7 @@ proc defaultConfig*(root: string): Config =
     presetsPath: root / "config" / "models-preset.ini",
     dataDir: root / "data",
     dbPath: root / "data" / "cerisier.db",
-    llamaHost: "127.0.0.1",
+    llamaHost: "0.0.0.0",
     llamaPort: 8081,
     toolsDir: root / "tools",
   )

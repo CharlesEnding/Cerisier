@@ -2,7 +2,7 @@
 ## Every page is a normal server-rendered full page load, except the chat
 ## page's WebSocket channel which live-updates in place.
 
-import std/[asyncdispatch, json, strformat, options, strutils, tables, sequtils]
+import std/[asyncdispatch, json, strformat, options, strutils, tables, sequtils, deques]
 import prologue
 import prologue/websocket
 import ./layout
@@ -408,6 +408,49 @@ type
     generating: bool
     cancelled: bool
 
+  TokenQueue = ref object
+    ## Unbounded queue decoupling llama.cpp's token stream from the
+    ## WebSocket send. `onToken`/`onReasoning` push and return immediately
+    ## (no data is ever dropped — the deque grows if the socket is slow), so
+    ## `postJsonStream`'s read loop is never blocked waiting on network I/O
+    ## for the browser. A separate `runSender` task drains the queue at
+    ## whatever pace the WebSocket allows.
+    items: Deque[string]
+    notEmpty: Future[void]
+    closed: bool
+
+proc newTokenQueue(): TokenQueue =
+  TokenQueue(items: initDeque[string](), notEmpty: newFuture[void]("TokenQueue.notEmpty"), closed: false)
+
+proc push(q: TokenQueue, item: string) =
+  q.items.addLast(item)
+  if not q.notEmpty.finished:
+    q.notEmpty.complete()
+
+proc closeQueue(q: TokenQueue) =
+  q.closed = true
+  if not q.notEmpty.finished:
+    q.notEmpty.complete()
+
+proc runSender(ws: WebSocket, q: TokenQueue): Future[void] {.async, gcsafe.} =
+  ## Drains `q` and sends each item over `ws`, in order, until the queue is
+  ## closed and empty. Runs concurrently with (never blocks) token
+  ## production: if the socket is slow, items simply pile up in the deque
+  ## instead of stalling generation.
+  while true:
+    if q.items.len == 0:
+      if q.closed:
+        break
+      await q.notEmpty
+      q.notEmpty = newFuture[void]("TokenQueue.notEmpty")
+      continue
+    let item = q.items.popFirst()
+    try:
+      await ws.send(item)
+    except WebSocketError:
+      q.closed = true
+      break
+
 proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
                         st: ChatTurnState, content: string) {.async, gcsafe.} =
   st.generating = true
@@ -423,13 +466,26 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
           continue ## not a valid chat-completions role; kept in the DB only for display
         history.add((role, msgContent))
       logInfo("router", "sendTurn model=" & sess.model & " messages=" & $history.len)
+      let queue = newTokenQueue()
+      let senderFut = runSender(ws, queue)
       let onToken = proc(tok: string): Future[void] {.gcsafe.} =
-        ws.send($(%*{"type": "assistant_token", "content": tok}))
+        queue.push($(%*{"type": "assistant_token", "content": tok}))
+        result = newFuture[void]("onToken")
+        result.complete()
       let onReasoning = proc(tok: string): Future[void] {.gcsafe.} =
-        ws.send($(%*{"type": "reasoning_token", "content": tok}))
+        queue.push($(%*{"type": "reasoning_token", "content": tok}))
+        result = newFuture[void]("onReasoning")
+        result.complete()
       let isCancelled = proc(): bool {.gcsafe.} =
         st.cancelled
       let reply = await sess.sendTurnStreaming(history, onToken, onReasoning, isCancelled)
+      ## Generation is done, but the WebSocket sender may still be catching
+      ## up on a backlog: close the queue and wait for it to drain so every
+      ## token reaches the browser before the final assistant_message is
+      ## sent (ordering matters for the UI), without having made llama.cpp
+      ## wait for the network at any point above.
+      closeQueue(queue)
+      await senderFut
       if reply.content.len == 0:
         logInfo("ws", "conversation " & $convId & " got an EMPTY reply from the model (cancelled=" & $st.cancelled & ")")
       else:
