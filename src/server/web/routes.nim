@@ -50,7 +50,10 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
     currentId = existing[0][0]
   var log = ""
   for (id, parentId, role, content, createdAt) in s.db.messagesForConversation(currentId):
-    log.add(&"<div class=\"msg {role}\">{content}</div>\n")
+    if role == "reasoning":
+      log.add(&"<details class=\"reasoning\"><summary>Reasoning</summary><div>{content}</div></details>\n")
+    else:
+      log.add(&"<div class=\"msg {role}\">{content}</div>\n")
   let title = s.db.getConversationTitle(currentId)
   var currentModel = ""
   var modelOptions = ""
@@ -325,19 +328,27 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
       let sess = getOrCreateChatSession(s, convId)
       var history: seq[(string, string)] = @[]
       for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId):
+        if role == "reasoning":
+          continue ## not a valid chat-completions role; kept in the DB only for display
         history.add((role, msgContent))
       logInfo("router", "sendTurn model=" & sess.model & " messages=" & $history.len)
       let onToken = proc(tok: string): Future[void] {.gcsafe.} =
         ws.send($(%*{"type": "assistant_token", "content": tok}))
+      let onReasoning = proc(tok: string): Future[void] {.gcsafe.} =
+        ws.send($(%*{"type": "reasoning_token", "content": tok}))
       let isCancelled = proc(): bool {.gcsafe.} =
         st.cancelled
-      let reply = await sess.sendTurnStreaming(history, onToken, isCancelled)
-      if reply.len == 0:
+      let reply = await sess.sendTurnStreaming(history, onToken, onReasoning, isCancelled)
+      if reply.content.len == 0:
         logInfo("ws", "conversation " & $convId & " got an EMPTY reply from the model (cancelled=" & $st.cancelled & ")")
       else:
-        logInfo("router", "sendTurn reply (" & $reply.len & " chars, cancelled=" & $st.cancelled & ")")
-      discard s.orchestrator.appendMessage(convId, none(int64), "assistant", reply)
-      await ws.send($(%*{"type": "assistant_message", "content": reply, "cancelled": st.cancelled}))
+        logInfo("router", "sendTurn reply (" & $reply.content.len & " chars, " &
+          $reply.reasoning.len & " reasoning char(s), cancelled=" & $st.cancelled & ")")
+      if reply.reasoning.len > 0:
+        discard s.orchestrator.appendMessage(convId, none(int64), "reasoning", reply.reasoning)
+      discard s.orchestrator.appendMessage(convId, none(int64), "assistant", reply.content)
+      await ws.send($(%*{"type": "assistant_message", "content": reply.content,
+                         "reasoning": reply.reasoning, "cancelled": st.cancelled}))
       let newTitle = maybeGenerateTitle(s, convId, sess, history)
       if newTitle.isSome:
         await ws.send($(%*{"type": "title_updated", "title": newTitle.get()}))

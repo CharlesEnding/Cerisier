@@ -4,7 +4,7 @@
 ## that a caller can choose not to invoke; nothing here executes at
 ## module-import time.
 
-import std/[httpclient, json, uri, strformat, strutils, asyncdispatch, asyncnet]
+import std/[httpclient, json, uri, strformat, strutils, asyncdispatch, asyncnet, options]
 import ../../common/types
 import ../log
 
@@ -43,11 +43,39 @@ proc postJson*(rc: RouterClient, path: string, body: JsonNode): JsonNode =
   let resp = client.postContent(rc.baseUrl & path, $body)
   parseJson(resp)
 
+type
+  LineBuf = ref object
+    data: string
+
+proc nextLine(socket: AsyncSocket, buf: LineBuf): Future[Option[string]] {.async.} =
+  ## Buffered line reader over a raw socket. `AsyncSocket.recvLine` reads
+  ## one byte at a time internally, which is fine for a short HTTP header
+  ## block but tanks throughput badly for a token-per-line SSE stream (this
+  ## was the actual cause of slow-feeling streaming — not the endpoint
+  ## choice). This reads in 8KB chunks and slices lines out of our own
+  ## buffer instead. The buffer is a ref object rather than a `var string`
+  ## param: async procs can't capture `var` params as closures.
+  while true:
+    let idx = buf.data.find('\n')
+    if idx >= 0:
+      let line = buf.data[0 ..< idx]
+      buf.data = buf.data[idx + 1 .. ^1]
+      return some(line)
+    let chunk = await socket.recv(8192)
+    if chunk.len == 0:
+      if buf.data.len > 0:
+        let line = buf.data
+        buf.data = ""
+        return some(line)
+      return none(string)
+    buf.data.add(chunk)
+
 proc postJsonStream*(rc: RouterClient, path: string, body: JsonNode,
-                      onChunk: proc(chunk: string): Future[void] {.gcsafe.},
+                      onToken: proc(chunk: string): Future[void] {.gcsafe.},
+                      onReasoning: proc(chunk: string): Future[void] {.gcsafe.},
                       isCancelled: proc(): bool {.gcsafe.}): Future[JsonNode] {.async, gcsafe.} =
   ## Streams a chat-completion style POST as Server-Sent Events over a raw
-  ## async socket, awaiting `onChunk` for each incremental assistant text
+  ## async socket, awaiting `onToken`/`onReasoning` for each incremental
   ## fragment as it arrives so callers (e.g. a WebSocket handler) can push
   ## tokens out immediately instead of buffering the whole reply. No read
   ## timeout is applied anywhere in this call — generation time is
@@ -56,7 +84,9 @@ proc postJsonStream*(rc: RouterClient, path: string, body: JsonNode,
   let payload = $body
   let socket = newAsyncSocket()
   var fullText = ""
+  var fullReasoning = ""
   var lastUsage: JsonNode = nil
+  var buf = LineBuf(data: "")
   try:
     logInfo("router", &"connecting to {rc.host}:{rc.port} for {path}")
     await socket.connect(rc.host, Port(rc.port))
@@ -68,10 +98,10 @@ proc postJsonStream*(rc: RouterClient, path: string, body: JsonNode,
     # Skip the HTTP response headers.
     var sawHeaders = false
     while true:
-      let line = await socket.recvLine()
-      if line.len == 0:
+      let lineOpt = await nextLine(socket, buf)
+      if lineOpt.isNone:
         break ## connection closed before headers finished
-      if line.strip().len == 0:
+      if lineOpt.get().strip().len == 0:
         sawHeaders = true
         break
     if not sawHeaders:
@@ -81,10 +111,10 @@ proc postJsonStream*(rc: RouterClient, path: string, body: JsonNode,
       if isCancelled():
         logInfo("router", "generation cancelled by caller")
         break
-      let line = await socket.recvLine()
-      if line.len == 0:
+      let lineOpt = await nextLine(socket, buf)
+      if lineOpt.isNone:
         break ## socket closed
-      let trimmed = line.strip()
+      let trimmed = lineOpt.get().strip()
       if trimmed.len == 0 or not trimmed.startsWith("data:"):
         continue
       let jsonPayload = trimmed[5 .. ^1].strip()
@@ -99,14 +129,22 @@ proc postJsonStream*(rc: RouterClient, path: string, body: JsonNode,
           if piece.len > 0:
             fullText.add(piece)
             inc chunkCount
-            await onChunk(piece)
+            await onToken(piece)
+          # llama.cpp / DeepSeek-style reasoning models emit reasoning text
+          # under `reasoning_content` (some servers use `reasoning`).
+          var reasoningPiece = delta{"reasoning_content"}.getStr("")
+          if reasoningPiece.len == 0:
+            reasoningPiece = delta{"reasoning"}.getStr("")
+          if reasoningPiece.len > 0:
+            fullReasoning.add(reasoningPiece)
+            await onReasoning(reasoningPiece)
       let usage = node{"usage"}
       if usage != nil:
         lastUsage = usage
     logInfo("router", &"stream done: {chunkCount} chunk(s), {fullText.len} char(s) total")
   finally:
     socket.close()
-  result = %*{"content": fullText}
+  result = %*{"content": fullText, "reasoning": fullReasoning}
   if lastUsage != nil:
     result["usage"] = lastUsage
 

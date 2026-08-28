@@ -73,22 +73,32 @@ proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): string =
   else:
     result = ""
 
+type
+  StreamingReply* = object
+    content*: string
+    reasoning*: string
+
 proc sendTurnStreaming*(session: LlamaSession, messages: seq[(string, string)],
                          onToken: proc(tok: string): Future[void] {.gcsafe.},
-                         isCancelled: proc(): bool {.gcsafe.}): Future[string] {.async, gcsafe.} =
+                         onReasoning: proc(tok: string): Future[void] {.gcsafe.},
+                         isCancelled: proc(): bool {.gcsafe.}): Future[StreamingReply] {.async, gcsafe.} =
   ## Like `sendTurn`, but streams the assistant reply token-by-token via
   ## `onToken` (awaited for each chunk) as it's generated, and can be
-  ## aborted early by `isCancelled`. Whatever text was accumulated so far
-  ## (full or partial, if cancelled) is recorded as the turn and returned.
+  ## aborted early by `isCancelled`. Reasoning/thinking tokens (if the model
+  ## emits them) are streamed separately via `onReasoning`. Whatever text
+  ## was accumulated so far (full or partial, if cancelled) is recorded as
+  ## the turn and returned.
   let body = buildChatRequest(session.model, messages, stream = true)
-  let resp = await session.router.postJsonStream("/v1/chat/completions", body, onToken, isCancelled)
+  let resp = await session.router.postJsonStream("/v1/chat/completions", body, onToken, onReasoning, isCancelled)
   let usage = resp{"usage"}
   if usage != nil:
     session.recordUsage(usage{"prompt_tokens"}.getInt(session.promptTokens),
                           usage{"completion_tokens"}.getInt(session.completionTokens))
-  result = resp{"content"}.getStr("")
-  if result.len > 0:
-    discard session.db.addTurn(session.id, "assistant", result)
+  result.content = resp{"content"}.getStr("")
+  result.reasoning = resp{"reasoning"}.getStr("")
+  if result.content.len > 0:
+    discard session.db.addTurn(session.id, "assistant", result.content)
+
 
 proc summarizePrompt(): string =
   "Summarize the conversation so far concisely, preserving all facts and " &

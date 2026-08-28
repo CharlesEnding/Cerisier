@@ -14,6 +14,8 @@ function connectChat(conversationId) {
   const input = document.getElementById('chat-input');
   const sendBtn = document.querySelector('#chat-form button[type="submit"]');
   let streamingDiv = null;
+  let reasoningDetails = null;
+  let reasoningBody = null;
 
   function setGenerating(isGenerating) {
     if (stopBtn) stopBtn.style.display = isGenerating ? '' : 'none';
@@ -23,6 +25,22 @@ function connectChat(conversationId) {
 
   ws.onmessage = (ev) => {
     const data = JSON.parse(ev.data);
+    if (data.type === 'reasoning_token') {
+      if (!reasoningDetails) {
+        reasoningDetails = document.createElement('details');
+        reasoningDetails.className = 'reasoning';
+        reasoningDetails.open = true; // visible while actively reasoning
+        const summary = document.createElement('summary');
+        summary.textContent = 'Reasoning';
+        reasoningBody = document.createElement('div');
+        reasoningDetails.appendChild(summary);
+        reasoningDetails.appendChild(reasoningBody);
+        log.appendChild(reasoningDetails);
+      }
+      reasoningBody.textContent += data.content;
+      log.scrollTop = log.scrollHeight;
+      return;
+    }
     if (data.type === 'assistant_token') {
       if (!streamingDiv) {
         streamingDiv = document.createElement('div');
@@ -37,6 +55,11 @@ function connectChat(conversationId) {
       if (streamingDiv) {
         streamingDiv.remove();
         streamingDiv = null;
+      }
+      if (reasoningDetails) {
+        reasoningDetails.open = false; // collapse once the answer is done
+        reasoningDetails = null;
+        reasoningBody = null;
       }
       setGenerating(false);
     }
