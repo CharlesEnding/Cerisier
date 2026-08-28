@@ -50,6 +50,16 @@ body.sidebar-collapsed #sidebar {
 }
 .pending { border-left: 3px solid #e0a800; padding-left: 0.5rem; }
 .tool-call { border-left: 3px solid var(--accent); padding-left: 0.5rem; margin: 0.5rem 0; }
+.tool-call pre { white-space: pre-wrap; word-break: break-word; margin: 0.25rem 0; }
+.tool-call.pending { border-left-color: #e0a800; }
+.tool-call.pending-resolved { border-left-color: #e0a800; opacity: 0.7; }
+.tool-call-note { font-style: italic; color: #999; }
+.tool-call-actions { display: flex; gap: 0.4rem; margin-top: 0.3rem; flex-wrap: wrap; }
+.tool-call-kill { border-color: #a33 !important; color: #ffb3b3; }
+.tool-call.result.succeeded { border-left-color: #7ee787; }
+.tool-call.result.failed, .tool-call.result.timeout,
+.tool-call.result.protocol_error, .tool-call.result.validation_failed { border-left-color: #a33; }
+.tool-call.result.denied, .tool-call.result.killed { border-left-color: #666; }
 .sub-conversation { border-left: 3px solid #7ee787; padding-left: 0.5rem; margin: 0.5rem 0; }
 .reasoning { color: #999; font-style: italic; border-left: 3px solid #666; padding-left: 0.5rem; }
 form.inline { display: inline; }

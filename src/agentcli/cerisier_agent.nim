@@ -3,7 +3,7 @@
 ## user's behalf and streaming results back to cerisier-server over a
 ## WebSocket connection.
 
-import std/[asyncdispatch, json, os, parseopt]
+import std/[json, os, parseopt, osproc]
 import ../server/tools/registry
 import ../server/tools/runner_local
 
@@ -27,8 +27,18 @@ proc handleJob(reg: ToolRegistry, jobJson: JsonNode): JsonNode =
   let jobId = jobJson{"id"}.getStr("")
   try:
     let manifest = reg.find(toolName)
-    let res = runLocal(manifest, argsJson)
-    %*{"id": jobId, "exit_code": res.exitCode, "output": res.output}
+    let p = startLocal(manifest, argsJson)
+    var waited = 0
+    const stepMs = 50
+    while p.running() and waited < manifest.timeoutMs:
+      sleep(stepMs)
+      waited += stepMs
+    if p.running():
+      p.kill()
+      return %*{"id": jobId, "exit_code": -1, "output": "timed out"}
+    let exitCode = p.peekExitCode()
+    let output = readAndClose(p)
+    %*{"id": jobId, "exit_code": exitCode, "output": output}
   except CatchableError as e:
     %*{"id": jobId, "exit_code": -1, "output": "error: " & e.msg}
 

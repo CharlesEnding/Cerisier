@@ -1,0 +1,24 @@
+{
+  "name": "write_file",
+  "description": "Write text content to a file at the given path, creating parent directories as needed. No sandboxing.",
+  "kind": "python",
+  "location": "local",
+  "entrypoint": "tools/scripts/write_file.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["path", "content"],
+    "properties": {
+      "path": {"type": "string"},
+      "content": {"type": "string"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["bytes_written"],
+    "properties": {
+      "bytes_written": {"type": "integer"}
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "ask"
+}

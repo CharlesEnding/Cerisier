@@ -15,6 +15,8 @@ import ../llama/preset
 import ../llama/process
 import ../agent/conversation
 import ../tools/registry
+import ../tools/executor
+import ../tools/toolcalls
 import ../log
 import ../../common/types
 
@@ -26,6 +28,8 @@ type
     staticDir*: string
     chatSessions*: Table[int64, LlamaSession] ## one live session per conversation, lazily created
     toolRegistry*: ToolRegistry
+    toolExecutor*: ToolExecutor
+    pendingApprovals*: Table[int64, Future[void]] ## toolCallId -> resolved when approve/deny/kill lands
     presetsPath*: string
     pm*: ProcessManager ## router process supervisor, for status reporting in the UI
     lastLoadAttempt*: string ## "modelId at HH:mm:ss" of the most recent load attempt, for diagnostics
@@ -411,28 +415,108 @@ proc modelsDeletePost*(ctx: Context) {.async, gcsafe.} =
 
 
 
-# ---------------- Tools (existing tools available to the agent) ----------------
+# ---------------- Tools (registry management: register/edit/delete tool
+# manifests. Runtime approval/deny/kill of individual tool calls happens
+# inline in the chat UI, never here.) ----------------
 
 proc toolsPage*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
   var rows = ""
   for t in s.toolRegistry.tools:
-    rows.add(&"""<tr><td>{t.name}</td><td>{t.description}</td><td>{t.kind}</td><td>{t.location}</td><td><code>{t.entrypoint}</code></td><td>{t.autoRun}</td></tr>""")
+    rows.add(&"""<tr><td>{t.name}</td><td>{t.description}</td><td>{t.kind}</td><td>{t.location}</td><td><code>{t.entrypoint}</code></td><td>{t.permission}</td>
+      <td><a href="/tools/edit/{t.name}">Edit</a></td>
+      <td><form class="inline" method="post" action="/tools/delete"><input type="hidden" name="name" value="{t.name}"><button>Delete</button></form></td></tr>""")
   let body = &"""<h1>Tools</h1>
-  <p>Purpose-built scripts and executables available to the agent. Approval of individual tool calls happens inline in the chat, not here.</p>
-  <table><tr><th>Name</th><th>Description</th><th>Kind</th><th>Location</th><th>Entrypoint</th><th>Auto-run</th></tr>{rows}</table>"""
+  <p>Register/edit the scripts and executables available to the agent. Approving, denying, or killing an individual tool call happens inline in the chat, not here.</p>
+  <table><tr><th>Name</th><th>Description</th><th>Kind</th><th>Location</th><th>Entrypoint</th><th>Permission</th><th></th><th></th></tr>{rows}</table>
+  <h2>New tool</h2>
+  <form method="post" action="/tools/new">
+    <p>Name: <input name="name"></p>
+    <p>Description: <input name="description" size="60"></p>
+    <p>Kind: <select name="kind"><option value="shell">shell</option><option value="python">python</option><option value="nim-binary">nim-binary</option></select></p>
+    <p>Location: <select name="location"><option value="local">local</option><option value="remote">remote</option></select></p>
+    <p>Entrypoint: <input name="entrypoint" size="60"></p>
+    <p>Input schema (JSON): <textarea name="input_schema" rows="3" cols="60">{{}}</textarea></p>
+    <p>Output schema (JSON): <textarea name="output_schema" rows="3" cols="60">{{}}</textarea></p>
+    <p>Timeout (ms): <input name="timeout_ms" value="30000"></p>
+    <p>Permission: <select name="permission"><option value="ask">ask</option><option value="auto">auto</option><option value="deny">deny</option></select></p>
+    <p><button type="submit">Save</button></p>
+  </form>"""
   resp htmlResponse(page("Tools", "/tools", body))
 
-proc toolsApprovePost*(ctx: Context) {.async, gcsafe.} =
+proc toolsEditGet*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
-  let id = parseInt(ctx.getFormParams("id"))
-  s.db.setToolCallStatus(id, "approved")
+  let name = ctx.getPathParams("name")
+  var m: ToolManifest
+  try:
+    m = s.toolRegistry.find(name)
+  except KeyError:
+    resp redirect("/tools")
+    return
+  let body = &"""<h1>Edit tool: {m.name}</h1>
+  <form method="post" action="/tools/edit">
+    <input type="hidden" name="orig_name" value="{m.name}">
+    <p>Name: <input name="name" value="{m.name}"></p>
+    <p>Description: <input name="description" value="{m.description}" size="60"></p>
+    <p>Kind:
+      <select name="kind">
+        <option value="shell" {(if m.kind == tkShell: "selected" else: "")}>shell</option>
+        <option value="python" {(if m.kind == tkPython: "selected" else: "")}>python</option>
+        <option value="nim-binary" {(if m.kind == tkNimBinary: "selected" else: "")}>nim-binary</option>
+      </select></p>
+    <p>Location:
+      <select name="location">
+        <option value="local" {(if m.location == tlLocal: "selected" else: "")}>local</option>
+        <option value="remote" {(if m.location == tlRemote: "selected" else: "")}>remote</option>
+      </select></p>
+    <p>Entrypoint: <input name="entrypoint" value="{m.entrypoint}" size="60"></p>
+    <p>Input schema (JSON): <textarea name="input_schema" rows="3" cols="60">{m.inputSchema}</textarea></p>
+    <p>Output schema (JSON): <textarea name="output_schema" rows="3" cols="60">{m.outputSchema}</textarea></p>
+    <p>Timeout (ms): <input name="timeout_ms" value="{m.timeoutMs}"></p>
+    <p>Permission:
+      <select name="permission">
+        <option value="ask" {(if m.permission == ptAsk: "selected" else: "")}>ask</option>
+        <option value="auto" {(if m.permission == ptAuto: "selected" else: "")}>auto</option>
+        <option value="deny" {(if m.permission == ptDeny: "selected" else: "")}>deny</option>
+      </select></p>
+    <p><button type="submit">Save</button></p>
+  </form>"""
+  resp htmlResponse(page("Edit tool", "/tools", body))
+
+proc manifestFromForm(ctx: Context): ToolManifest =
+  ToolManifest(
+    name: ctx.getFormParams("name").strip(),
+    description: ctx.getFormParams("description"),
+    kind: parseEnum[ToolKind](ctx.getFormParams("kind")),
+    location: parseEnum[ToolLocation](ctx.getFormParams("location")),
+    entrypoint: ctx.getFormParams("entrypoint"),
+    inputSchema: ctx.getFormParams("input_schema"),
+    outputSchema: ctx.getFormParams("output_schema"),
+    timeoutMs: parseInt(ctx.getFormParams("timeout_ms")),
+    permission: parseEnum[ToolPermission](ctx.getFormParams("permission")),
+  )
+
+proc toolsNewPost*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  let m = manifestFromForm(ctx)
+  if m.name.len > 0:
+    s.toolRegistry.saveManifest(m)
   resp redirect("/tools")
 
-proc toolsDenyPost*(ctx: Context) {.async, gcsafe.} =
+proc toolsEditPost*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
-  let id = parseInt(ctx.getFormParams("id"))
-  s.db.setToolCallStatus(id, "denied")
+  let origName = ctx.getFormParams("orig_name")
+  let m = manifestFromForm(ctx)
+  if m.name.len > 0:
+    if origName.len > 0 and origName != m.name:
+      s.toolRegistry.deleteManifest(origName)
+    s.toolRegistry.saveManifest(m)
+  resp redirect("/tools")
+
+proc toolsDeletePost*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  let name = ctx.getFormParams("name")
+  s.toolRegistry.deleteManifest(name)
   resp redirect("/tools")
 
 # ---------------- Skills ----------------
@@ -654,54 +738,92 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
     logInfo("ws", "conversation " & $convId & " user message (" & $content.len & " chars)")
     try:
       let sess = await getOrCreateChatSession(s, convId)
-      var history: seq[(string, string)] = @[]
-      for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId):
-        if role == "reasoning":
-          continue ## not a valid chat-completions role; kept in the DB only for display
-        history.add((role, msgContent))
-      logInfo("router", "sendTurn model=" & sess.model & " messages=" & $history.len)
-      let queue = newTokenQueue()
-      let senderFut = runSender(ws, queue)
-      let onToken = proc(tok: string): Future[void] {.gcsafe.} =
-        queue.push(%*{"type": "assistant_token", "content": tok})
-        result = newFuture[void]("onToken")
-        result.complete()
-      let onReasoning = proc(tok: string): Future[void] {.gcsafe.} =
-        queue.push(%*{"type": "reasoning_token", "content": tok})
-        result = newFuture[void]("onReasoning")
-        result.complete()
-      let isCancelled = proc(): bool {.gcsafe.} =
-        st.cancelled
-      let reply = await sess.sendTurnStreaming(history, onToken, onReasoning, isCancelled)
-      ## Generation is done, but the WebSocket sender may still be catching
-      ## up on a backlog: close the queue and wait for it to drain so every
-      ## token reaches the browser before the final assistant_message is
-      ## sent (ordering matters for the UI), without having made llama.cpp
-      ## wait for the network at any point above.
-      closeQueue(queue)
-      await senderFut
-      if reply.content.len == 0 and not st.cancelled:
+
+      proc currentHistory(): seq[(string, string)] =
+        result = @[]
+        let fragment = s.toolRegistry.systemPromptFragment()
+        if fragment.len > 0:
+          result.add(("system", fragment))
+        for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId):
+          if role == "reasoning":
+            continue ## not a valid chat-completions role; kept in the DB only for display
+          result.add((role, msgContent))
+
+      const maxToolRounds = 5
+      var round = 0
+      var finalReply: StreamingReply
+      var lastHistoryLenForTitle: seq[(string, string)] = @[]
+
+      while true:
+        let history = currentHistory()
+        lastHistoryLenForTitle = history
+        logInfo("router", "sendTurn model=" & sess.model & " messages=" & $history.len)
+        let queue = newTokenQueue()
+        let senderFut = runSender(ws, queue)
+        let onToken = proc(tok: string): Future[void] {.gcsafe.} =
+          queue.push(%*{"type": "assistant_token", "content": tok})
+          result = newFuture[void]("onToken")
+          result.complete()
+        let onReasoning = proc(tok: string): Future[void] {.gcsafe.} =
+          queue.push(%*{"type": "reasoning_token", "content": tok})
+          result = newFuture[void]("onReasoning")
+          result.complete()
+        let isCancelled = proc(): bool {.gcsafe.} =
+          st.cancelled
+        let reply = await sess.sendTurnStreaming(history, onToken, onReasoning, isCancelled)
+        closeQueue(queue)
+        await senderFut
+        finalReply = reply
+
+        if reply.reasoning.len > 0:
+          discard s.orchestrator.appendMessage(convId, none(int64), "reasoning", reply.reasoning)
+
+        let calls = parseToolCalls(reply.content)
+        if calls.len == 0 or st.cancelled or round >= maxToolRounds:
+          let visible = stripToolCalls(reply.content)
+          discard s.orchestrator.appendMessage(convId, none(int64), "assistant", visible)
+          finalReply = StreamingReply(content: visible, reasoning: reply.reasoning, error: reply.error)
+          break
+
+        let assistantMsgId = s.orchestrator.appendMessage(convId, none(int64), "assistant", reply.content)
+        for call in calls:
+          if call.malformed:
+            discard s.orchestrator.appendMessage(convId, none(int64), "tool",
+              $(%*{"ok": false, "error": call.error}))
+            continue
+          let toolCallId = s.toolExecutor.requestToolCall(convId, assistantMsgId, call.name, call.argsJson)
+          var (status, resultJson, toolName, argsJson) = s.db.getToolCall(toolCallId)
+          if status == $tcsPendingApproval:
+            let fut = newFuture[void]("pendingApproval")
+            s.pendingApprovals[toolCallId] = fut
+            await ws.send($(%*{"type": "tool_call_pending", "id": toolCallId, "name": call.name, "args": call.argsJson}))
+            await fut
+            s.pendingApprovals.del(toolCallId)
+            (status, resultJson, toolName, argsJson) = s.db.getToolCall(toolCallId)
+          discard s.orchestrator.appendMessage(convId, none(int64), "tool",
+            (if resultJson.len > 0: resultJson else: $(%*{"ok": false, "error": status})))
+          await ws.send($(%*{"type": "tool_call_result", "id": toolCallId, "status": status, "result": resultJson}))
+        inc round
+
+      if finalReply.content.len == 0 and not st.cancelled:
         ## An empty, non-cancelled reply means something went wrong
         ## upstream (router unreachable mid-stream, model crash/OOM, a
         ## malformed response, etc.) — don't silently store/show an empty
         ## assistant message, surface it as an actual error instead.
-        let fallback = if reply.error.len > 0: reply.error
+        let fallback = if finalReply.error.len > 0: finalReply.error
                        else: "model returned an empty reply — check server logs"
         let reason = routerAwareFailureReason(s, fallback)
         logError("ws", "conversation " & $convId & " got an EMPTY reply from the model: " & reason)
         await ws.send($(%*{"type": "error", "content": reason}))
       else:
-        if reply.content.len == 0:
+        if finalReply.content.len == 0:
           logInfo("ws", "conversation " & $convId & " got an EMPTY reply from the model (cancelled=" & $st.cancelled & ")")
         else:
-          logInfo("router", "sendTurn reply (" & $reply.content.len & " chars, " &
-            $reply.reasoning.len & " reasoning char(s), cancelled=" & $st.cancelled & ")")
-        if reply.reasoning.len > 0:
-          discard s.orchestrator.appendMessage(convId, none(int64), "reasoning", reply.reasoning)
-        discard s.orchestrator.appendMessage(convId, none(int64), "assistant", reply.content)
-        await ws.send($(%*{"type": "assistant_message", "content": reply.content,
-                           "reasoning": reply.reasoning, "cancelled": st.cancelled}))
-      let newTitle = await maybeGenerateTitle(s, convId, sess, history)
+          logInfo("router", "sendTurn reply (" & $finalReply.content.len & " chars, " &
+            $finalReply.reasoning.len & " reasoning char(s), cancelled=" & $st.cancelled & ")")
+        await ws.send($(%*{"type": "assistant_message", "content": finalReply.content,
+                           "reasoning": finalReply.reasoning, "cancelled": st.cancelled}))
+      let newTitle = await maybeGenerateTitle(s, convId, sess, lastHistoryLenForTitle)
       if newTitle.isSome:
         await ws.send($(%*{"type": "title_updated", "title": newTitle.get()}))
     except CatchableError as e:
@@ -735,6 +857,34 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
         else:
           let content = node{"content"}.getStr("")
           asyncCheck handleUserMessage(s, convId, ws, st, content)
+      of "tool_call_approve":
+        let id = node{"id"}.getInt(0).int64
+        let always = node{"always"}.getBool(false)
+        if id != 0:
+          if always:
+            let (_, _, toolName, _) = s.db.getToolCall(id)
+            s.toolExecutor.setSessionPermission(convId, toolName, ptAuto)
+          s.toolExecutor.approve(id)
+          let (_, _, toolName, argsJson) = s.db.getToolCall(id)
+          asyncCheck (proc() {.async, gcsafe.} =
+            await s.toolExecutor.execute(id, toolName, argsJson)
+            if s.pendingApprovals.hasKey(id) and not s.pendingApprovals[id].finished:
+              s.pendingApprovals[id].complete()
+          )()
+      of "tool_call_deny":
+        let id = node{"id"}.getInt(0).int64
+        let always = node{"always"}.getBool(false)
+        if id != 0:
+          if always:
+            let (_, _, toolName, _) = s.db.getToolCall(id)
+            s.toolExecutor.setSessionPermission(convId, toolName, ptDeny)
+          s.toolExecutor.deny(id)
+          if s.pendingApprovals.hasKey(id) and not s.pendingApprovals[id].finished:
+            s.pendingApprovals[id].complete()
+      of "tool_call_kill":
+        let id = node{"id"}.getInt(0).int64
+        if id != 0:
+          s.toolExecutor.killToolCall(id)
       else:
         logInfo("ws", "conversation " & $convId & " unknown message type: " & msgType)
     except WebSocketError:
@@ -742,3 +892,4 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
     except CatchableError as e:
       logInfo("ws", "conversation " & $convId & " unexpected error: " & $e.name & ": " & e.msg)
       break
+

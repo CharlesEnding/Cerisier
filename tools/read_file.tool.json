@@ -1,0 +1,24 @@
+{
+  "name": "read_file",
+  "description": "Read a file's contents from the given path. No sandboxing.",
+  "kind": "python",
+  "location": "local",
+  "entrypoint": "tools/scripts/read_file.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["path"],
+    "properties": {
+      "path": {"type": "string"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["content"],
+    "properties": {
+      "content": {"type": "string"},
+      "truncated": {"type": "boolean"}
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "ask"
+}

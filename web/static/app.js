@@ -77,6 +77,59 @@ function connectChat(conversationId) {
       setGenerating(false);
       return;
     }
+    if (data.type === 'tool_call_pending') {
+      const div = document.createElement('div');
+      div.className = 'tool-call pending';
+      div.dataset.toolCallId = data.id;
+      const argsPreview = document.createElement('pre');
+      argsPreview.textContent = data.args;
+      div.innerHTML = `<strong>Tool call requested:</strong> ${data.name} `;
+      div.appendChild(argsPreview);
+      const btns = document.createElement('div');
+      btns.className = 'tool-call-actions';
+      const mkBtn = (label, msgType, always) => {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.addEventListener('click', () => {
+          ws.send(JSON.stringify({type: msgType, id: data.id, always}));
+          div.className = 'tool-call pending-resolved';
+          btns.remove();
+          const note = document.createElement('div');
+          note.className = 'tool-call-note';
+          note.textContent = `(${label.toLowerCase()} — waiting for result)`;
+          div.appendChild(note);
+        });
+        return b;
+      };
+      btns.appendChild(mkBtn('Approve', 'tool_call_approve', false));
+      btns.appendChild(mkBtn('Approve always', 'tool_call_approve', true));
+      btns.appendChild(mkBtn('Deny', 'tool_call_deny', false));
+      btns.appendChild(mkBtn('Deny always', 'tool_call_deny', true));
+      const killBtn = document.createElement('button');
+      killBtn.textContent = 'Kill';
+      killBtn.className = 'tool-call-kill';
+      killBtn.addEventListener('click', () => {
+        ws.send(JSON.stringify({type: 'tool_call_kill', id: data.id}));
+      });
+      btns.appendChild(killBtn);
+      div.appendChild(btns);
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+      return;
+    }
+    if (data.type === 'tool_call_result') {
+      const existing = log.querySelector(`[data-tool-call-id="${data.id}"]`);
+      if (existing) existing.remove();
+      const div = document.createElement('div');
+      div.className = 'tool-call result ' + data.status;
+      const pre = document.createElement('pre');
+      pre.textContent = data.result;
+      div.innerHTML = `<strong>Tool result (${data.status}):</strong> `;
+      div.appendChild(pre);
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+      return;
+    }
     if (data.type === 'assistant_message') {
       if (streamingDiv) {
         streamingDiv.remove();

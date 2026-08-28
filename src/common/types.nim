@@ -14,6 +14,11 @@ type
     tkPython = "python"
     tkShell = "shell"
 
+  ToolPermission* = enum
+    ptAuto = "auto"     ## runs immediately, no chat interaction needed
+    ptAsk = "ask"       ## default: pending_approval row + chat approve/deny UI
+    ptDeny = "deny"     ## registered/discoverable but never dispatchable
+
   ToolManifest* = object
     name*: string
     description*: string
@@ -21,8 +26,9 @@ type
     location*: ToolLocation
     entrypoint*: string       ## path to binary / script, or the shell command template
     inputSchema*: string      ## raw JSON schema describing accepted parameters
+    outputSchema*: string     ## raw JSON schema describing the `data` field of a successful result
     timeoutMs*: int
-    autoRun*: bool            ## if true, skip the approval gate (opt-in, defaults false)
+    permission*: ToolPermission
 
   ToolCallStatus* = enum
     tcsPendingApproval = "pending_approval"
@@ -32,6 +38,9 @@ type
     tcsFailed = "failed"
     tcsTimeout = "timeout"
     tcsDenied = "denied"
+    tcsKilled = "killed"
+    tcsValidationFailed = "validation_failed"
+    tcsProtocolError = "protocol_error"
 
   ToolCall* = object
     id*: int64

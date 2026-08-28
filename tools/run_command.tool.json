@@ -1,0 +1,24 @@
+{
+  "name": "run_command",
+  "description": "Run a shell command and return its exit code and combined stdout/stderr output. No sandboxing.",
+  "kind": "python",
+  "location": "local",
+  "entrypoint": "tools/scripts/run_command.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["command"],
+    "properties": {
+      "command": {"type": "string"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["exit_code", "output"],
+    "properties": {
+      "exit_code": {"type": "integer"},
+      "output": {"type": "string"}
+    }
+  },
+  "timeout_ms": 30000,
+  "permission": "ask"
+}

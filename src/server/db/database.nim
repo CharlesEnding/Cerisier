@@ -186,6 +186,12 @@ proc pendingToolCalls*(db: Database): seq[(int64, int64, string, string, string)
       FROM tool_calls WHERE status = 'pending_approval' ORDER BY id ASC"""):
     result.add((parseBiggestInt(row[0]).int64, parseBiggestInt(row[1]).int64, row[2], row[3], row[4]))
 
+proc getToolCall*(db: Database, id: int64): tuple[status, resultJson, toolName, argsJson: string] =
+  for row in db.conn.fastRows(sql"""SELECT status, COALESCE(result_json, ''), tool_name, args_json
+      FROM tool_calls WHERE id = ?""", id):
+    return (row[0], row[1], row[2], row[3])
+  ("", "", "", "")
+
 # ---- skills ----
 
 proc upsertSkill*(db: Database, name, description, promptTemplate, toolAllowlist: string) =

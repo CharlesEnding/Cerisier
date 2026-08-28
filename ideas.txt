@@ -1,0 +1,70 @@
+
+Formats one might want to add:
+* LaTeX formatting
+* Foreign language SRS card highlighting & color-coding
+* Historical text coloring of figures and locations by religion, faction, etc..
+
+Inspector:
+* A second panel where details of a given concept can be shown, like wikipedia.
+* Photograph lookup
+* Interactive diagram
+
+Functionalities:
+* Certain words become buttons, button action can be defined
+
+Cards:
+* Add concept to knowledge base
+
+Output modifier:
+* A reply can be modified in place. For example clicking on a hard word in a foreign language transforms it into a clause of easy words explaining it.
+
+Replies are objects:
+* Raw mode, edit mode, diff mode, history
+
+
+# Tools
+
+- **Web search** – fetch current info via API (Serper, Tavily, or Brave Search)
+- **Browser automation** – navigate/click/scrape pages (Playwright or Puppeteer)
+- **Code interpreter** – run Python/Sandboxed JS for math, data, formatting
+- **File system** – read/write/list files in a working directory
+- **HTTP client** – call arbitrary REST APIs (GET/POST/PATCH/DELETE)
+- **Vector DB / RAG** – semantic search over your own docs (Pinecone, ChromaDB)
+- **Calculator / math** – exact arithmetic, unit conversion, date math
+- **Shell / CLI** – run system commands for build, install, git
+- **Memory (short + long)** – in-conversation scratchpad and persistent key-value store
+- **Task / sub-agent spawner** – decompose work into parallel sub-tasks
+- **Structured output parser** – enforce JSON schemas on intermediate steps
+- **Timer / scheduler** – sleep, poll, or retry with backoff
+- **Image / doc parser** – OCR, PDF extraction, multimodal vision
+- **Tool selector / router** – let a lightweight model pick the right tool before calling it
+- **Git integration** – clone, branch, diff, commit, push (simple-git or git CLI)
+- **SQL connector** – query/read/write relational DBs (Postgres, MySQL, SQLite)
+- **Human-in-the-loop gate** – pause execution and request user approval before risky actions
+- **Webhook / event listener** – react to external triggers (Slack, GitHub, Stripe)
+- **Cost / token meter** – track per-turn spend, enforce budgets, alert on overrun
+- **Logging & tracing** – structured logs + OpenTelemetry spans for observability
+- **Cache layer** – memoize expensive tool calls (Redis or in-memory TTL cache)
+- **Patch / diff applier** – apply unified diffs to files without full rewrites
+- **Template renderer** – generate emails, reports, or prompts from Jinja2/Mustache
+- **State machine / workflow engine** – enforce ordered multi-step processes with retry/failure paths
+- **Config / feature-flag manager** – hot-reload agent settings, toggle tools per environment without redeploying
+- **RBAC / user manager** – create, role-assign, suspend users and tenants; scope tool access per role
+- **Secrets / API-key vault** – create, rotate, revoke credentials (Vault, AWS SM, or 1Password API)
+- **Audit-log query** – searchable trail of who called which tool, when, with what payload/result
+- **Rate-limiter / quota setter** – define per-user, per-tool, or per-tenant call limits and hard caps
+- **Kill-switch / circuit-breaker** – pause or halt all in-flight agent sessions across the fleet
+- **Deployment / env switcher** – promote configs or tool versions between staging → prod; one-click rollback
+- **Health-check / status probe** – ping downstream services, report tool latency, return a composite uptime score
+- **Backup / restore** – snapshot agent state, vector DBs, and config to object storage; restore on demand
+- **Broadcast / announcement** – push a notice or forced-update message into all active agent sessions
+- **Calendar / scheduler** – create, move, cancel appointments; find open slots across multiple calendars
+- **Email composer** – draft, send, categorize, and forward emails; flag threads needing follow-up
+- **Spreadsheet editor** – read, filter, sum, pivot, and export CSV/Excel without opening a GUI
+- **Document / invoice generator** – spit out PDFs, Word docs, invoices, or contracts from a template + data
+- **Contact / CRM-lite** – look up, add, and update people; note last contact and next follow-up
+- **Booking / appointment manager** – take bookings, send confirmations and no-show reminders automatically
+- **Task / to-do list** – create, assign, prioritize, and check off items; nudge people who've gone quiet
+- **Form / intake collector** – build a simple form, share a link, collect responses into a spreadsheet
+- **Signature / approval chain** – route a doc to one or more people for sign-off; chase anyone who hasn't acted
+- **Reminder / nudge scheduler** – "ping the client if the invoice is 5 days overdue," "email the team Friday 3pm for standup"

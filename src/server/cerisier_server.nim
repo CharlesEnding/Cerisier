@@ -8,6 +8,8 @@ import ./db/database
 import ./llama/[process, preset, router_client, session]
 import ./agent/conversation
 import ./tools/registry
+import ./tools/executor
+import ./tools/runner_remote
 import ./web/routes
 
 proc superviseRouterLoop(pm: ProcessManager) {.thread.} =
@@ -50,6 +52,7 @@ when isMainModule:
   let router = newRouterClient(cfg.llamaHost, cfg.llamaPort)
   let orchestrator = newOrchestrator(db, router)
   let toolRegistry = newToolRegistry(cfg.toolsDir)
+  let toolExecutor = newToolExecutor(db, toolRegistry, newCompanionRegistry())
 
   let pm = newProcessManager(cfg)
   pm.start()
@@ -58,7 +61,9 @@ when isMainModule:
 
   routes.state = AppState(db: db, router: router, orchestrator: orchestrator,
     staticDir: root / "web" / "static", chatSessions: initTable[int64, LlamaSession](),
-    toolRegistry: toolRegistry, presetsPath: cfg.presetsPath, pm: pm)
+    toolRegistry: toolRegistry, toolExecutor: toolExecutor,
+    pendingApprovals: initTable[int64, Future[void]](),
+    presetsPath: cfg.presetsPath, pm: pm)
 
   var app = newApp(settings = newSettings(
     appName = "cerisier",
@@ -82,8 +87,10 @@ when isMainModule:
   app.get("/router", routerPage)
   app.get("/router/status.json", routerStatusJson)
   app.get("/tools", toolsPage)
-  app.post("/tools/approve", toolsApprovePost)
-  app.post("/tools/deny", toolsDenyPost)
+  app.get("/tools/edit/{name}", toolsEditGet)
+  app.post("/tools/new", toolsNewPost)
+  app.post("/tools/edit", toolsEditPost)
+  app.post("/tools/delete", toolsDeletePost)
   app.get("/skills", skillsPage)
   app.post("/skills/new", skillsNewPost)
   app.post("/skills/delete", skillsDeletePost)
