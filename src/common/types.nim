@@ -70,3 +70,11 @@ type
     status*: ModelStatusValue
     supportsVision*: bool
     contextSize*: int
+
+  ModelOpResult* = object
+    ## Result of a load/unload call against the router: `success` mirrors
+    ## the router's own `success` field, `error` carries whatever error
+    ## detail we could extract (router-provided message, or the transport
+    ## exception's message if the request itself failed).
+    success*: bool
+    error*: string

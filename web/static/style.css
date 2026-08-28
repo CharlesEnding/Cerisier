@@ -79,6 +79,11 @@ table { width: 100%; border-collapse: collapse; }
   color: #10151f;
   align-self: flex-end;
 }
+#chat-log .msg.error {
+  background: #4a1f24;
+  border-color: #a33;
+  color: #ffb3b3;
+}
 #chat-form {
   display: flex;
   gap: 0.5rem;
@@ -117,3 +122,13 @@ button { cursor: pointer; }
 #chat-log { display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem; }
 .msg { padding: 0.5rem; border-radius: 6px; background: var(--bg-panel); }
 .msg.user { align-self: flex-end; background: #2b3a55; }
+.msg.error { background: #4a1f24; border: 1px solid #a33; color: #ffb3b3; }
+.model-msg { margin-left: 0.5rem; font-size: 0.85rem; color: #ffb3b3; }
+.router-banner {
+  background: #4a3a1f;
+  border: 1px solid #a87c33;
+  color: #ffdca3;
+  padding: 0.6rem 0.9rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+}

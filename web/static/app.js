@@ -59,6 +59,24 @@ function connectChat(conversationId) {
       log.scrollTop = log.scrollHeight;
       return;
     }
+    if (data.type === 'error') {
+      if (streamingDiv) {
+        streamingDiv.remove();
+        streamingDiv = null;
+      }
+      if (reasoningDetails) {
+        reasoningDetails.open = false;
+        reasoningDetails = null;
+        reasoningBody = null;
+      }
+      const div = document.createElement('div');
+      div.className = 'msg error';
+      div.textContent = data.content;
+      log.appendChild(div);
+      log.scrollTop = log.scrollHeight;
+      setGenerating(false);
+      return;
+    }
     if (data.type === 'assistant_message') {
       if (streamingDiv) {
         streamingDiv.remove();
@@ -105,15 +123,77 @@ function connectChat(conversationId) {
 
   const modelSelect = document.getElementById('model-select');
   if (modelSelect) {
+    const previousValue = modelSelect.value;
     modelSelect.addEventListener('change', () => {
+      const requested = modelSelect.value;
+      modelSelect.disabled = true;
       fetch(`/chat/${conversationId}/model`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({model: modelSelect.value}),
-      });
+        body: JSON.stringify({model: requested}),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          modelSelect.disabled = false;
+          if (!data.success) {
+            modelSelect.value = previousValue;
+            const div = document.createElement('div');
+            div.className = 'msg error';
+            div.textContent = `Failed to switch model: ${data.error || 'unknown error'}`;
+            log.appendChild(div);
+            log.scrollTop = log.scrollHeight;
+          }
+        })
+        .catch((err) => {
+          modelSelect.disabled = false;
+          modelSelect.value = previousValue;
+          const div = document.createElement('div');
+          div.className = 'msg error';
+          div.textContent = `Failed to switch model: ${err}`;
+          log.appendChild(div);
+          log.scrollTop = log.scrollHeight;
+        });
     });
   }
 }
+
+// Models page: Load/Unload buttons are plain buttons (not form submits) so
+// we can show inline success/error feedback without a page reload on
+// failure (a failed load previously looked identical to a successful one).
+function initModelsPage() {
+  const table = document.getElementById('models-table');
+  if (!table) return;
+  table.addEventListener('click', (e) => {
+    const btn = e.target.closest('.load-btn, .unload-btn');
+    if (!btn) return;
+    const model = btn.dataset.model;
+    const isLoad = btn.classList.contains('load-btn');
+    const row = document.getElementById(`model-row-${model}`);
+    const msgSpan = row ? row.querySelector('.model-msg') : null;
+    btn.disabled = true;
+    if (msgSpan) msgSpan.textContent = isLoad ? 'loading…' : 'unloading…';
+    fetch(isLoad ? '/models/load' : '/models/unload', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model}),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        btn.disabled = false;
+        if (data.success) {
+          location.reload();
+        } else if (msgSpan) {
+          msgSpan.textContent = `error: ${data.error || 'unknown error'}`;
+        }
+      })
+      .catch((err) => {
+        btn.disabled = false;
+        if (msgSpan) msgSpan.textContent = `error: ${err}`;
+      });
+  });
+}
+
+document.addEventListener('DOMContentLoaded', initModelsPage);
 
 function appendEvent(log, data) {
   const div = document.createElement('div');

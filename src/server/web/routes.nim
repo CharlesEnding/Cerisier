@@ -12,6 +12,7 @@ import ../formats/formats
 import ../llama/router_client
 import ../llama/session
 import ../llama/preset
+import ../llama/process
 import ../agent/conversation
 import ../tools/registry
 import ../log
@@ -26,6 +27,7 @@ type
     chatSessions*: Table[int64, LlamaSession] ## one live session per conversation, lazily created
     toolRegistry*: ToolRegistry
     presetsPath*: string
+    pm*: ProcessManager ## router process supervisor, for status reporting in the UI
 
 var state*: AppState
 
@@ -37,6 +39,23 @@ proc staticAsset*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
   let filename = ctx.getPathParams("file")
   await staticFileResponse(ctx, filename, s.staticDir)
+
+proc routerStatusBanner(s: AppState): string =
+  ## Rendered at the top of pages that talk to the router (chat, models) so
+  ## a crashed/restarting router process is visible without digging through
+  ## stdout logs.
+  if s.pm == nil:
+    return ""
+  case s.pm.state
+  of psRunning, psStarting:
+    return ""
+  of psCrashed:
+    if s.pm.restartCount >= 5:
+      return &"""<div class="router-banner">Router process crashed and auto-restart attempts are exhausted (last reason: {s.pm.lastCrashReason}). Restart the server manually.</div>"""
+    else:
+      return &"""<div class="router-banner">Router process crashed (last reason: {s.pm.lastCrashReason}) — restarting automatically (attempt {s.pm.restartCount}/5).</div>"""
+  of psStopped:
+    return """<div class="router-banner">Router process is not running.</div>"""
 
 # ---------------- Chat (the one live-updating page) ----------------
 
@@ -61,14 +80,24 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
   var modelOptions = ""
   try:
     let models = s.router.listModels()
-    if s.chatSessions.hasKey(currentId):
+    ## Prefer whatever the router itself reports as loaded — this is the
+    ## ground truth. The cached chat session's `model` field is only a
+    ## fallback for when nothing is loaded yet or the router is unreachable,
+    ## since it can go stale the moment a model is loaded/unloaded outside
+    ## of this conversation (e.g. from the /models page).
+    for m in models:
+      if m.status == msvLoaded:
+        currentModel = m.id
+        break
+    if currentModel.len == 0 and s.chatSessions.hasKey(currentId):
       currentModel = s.chatSessions[currentId].model
     for m in models:
       let selected = if m.id == currentModel: " selected" else: ""
       modelOptions.add(&"<option value=\"{m.id}\"{selected}>{m.id} ({m.status})</option>")
   except CatchableError as e:
-    logInfo("router", "listModels failed: " & e.msg)
+    logError("router", "listModels failed: " & e.msg)
   let body = &"""
+  {routerStatusBanner(s)}
   <div id="chat-header">
     <h1 id="chat-title">{title}</h1>
     <label for="model-select">Model:</label>
@@ -121,13 +150,14 @@ proc modelsPage*(ctx: Context) {.async, gcsafe.} =
     let models = s.router.listModels()
     logInfo("router", "listModels -> " & $models.len & " model(s)")
     for m in models:
-      rows.add(&"""<tr><td>{m.id}</td><td>{m.status}</td><td>{m.supportsVision}</td>
+      rows.add(&"""<tr id="model-row-{m.id}"><td>{m.id}</td><td class="model-status">{m.status}</td><td>{m.supportsVision}</td>
         <td>
-          <form class="inline" method="post" action="/models/load"><input type="hidden" name="model" value="{m.id}"><button>Load</button></form>
-          <form class="inline" method="post" action="/models/unload"><input type="hidden" name="model" value="{m.id}"><button>Unload</button></form>
+          <button type="button" class="load-btn" data-model="{m.id}">Load</button>
+          <button type="button" class="unload-btn" data-model="{m.id}">Unload</button>
+          <span class="model-msg"></span>
         </td></tr>""")
   except CatchableError as e:
-    logInfo("router", "listModels failed: " & e.msg)
+    logError("router", "listModels failed: " & e.msg)
     rows = &"<tr><td colspan=4>router unreachable: {e.msg}</td></tr>"
   var presetRows = ""
   for p in preset.listAllPresets(s.db):
@@ -138,8 +168,9 @@ proc modelsPage*(ctx: Context) {.async, gcsafe.} =
         <a href="/models/edit/{p.id}">Edit</a>
         <form class="inline" method="post" action="/models/delete"><input type="hidden" name="id" value="{p.id}"><button>Delete</button></form>
       </td></tr>""")
-  let body = &"""<h1>Models</h1>
-  <table><tr><th>Model</th><th>Status</th><th>Vision</th><th>Actions</th></tr>{rows}</table>
+  let body = &"""{routerStatusBanner(s)}
+  <h1>Models</h1>
+  <table id="models-table"><tr><th>Model</th><th>Status</th><th>Vision</th><th>Actions</th></tr>{rows}</table>
   <h2>Presets</h2>
   <p>Stored in the database; edited here and rendered into <code>models-preset.ini</code> for llama-server's router mode. Requires a router restart to take effect.</p>
   <table><tr><th>Id</th><th>Model path</th><th>Ctx</th><th>Configured</th><th>Load on startup</th><th>Actions</th></tr>{presetRows}</table>
@@ -164,19 +195,41 @@ proc modelsPage*(ctx: Context) {.async, gcsafe.} =
 
 proc modelsLoadPost*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
-  let model = ctx.getFormParams("model")
+  let payload = parseJson(ctx.request.body)
+  let model = payload{"model"}.getStr("")
   try:
-    discard s.router.loadModel(model)
-  except CatchableError: discard
-  resp redirect("/models")
+    ## The router/GPU may not have room for two models at once: unload
+    ## whatever else is currently reported loaded before loading the
+    ## requested one, mirroring `switchChatModel`'s behavior. Without this,
+    ## a failed load previously left the *other* (e.g. default/startup)
+    ## model loaded with no indication anything went wrong.
+    for m in s.router.listModels():
+      if m.status == msvLoaded and m.id != model:
+        let unloadRes = s.router.unloadModel(m.id)
+        if not unloadRes.success:
+          logError("router", "unload " & m.id & " before loading " & model & " failed: " & unloadRes.error)
+    let res = s.router.loadModel(model)
+    if res.success:
+      resp jsonResponse(%*{"success": true})
+    else:
+      resp jsonResponse(%*{"success": false, "error": res.error})
+  except CatchableError as e:
+    logError("routes", "load model " & model & " failed: " & e.msg)
+    resp jsonResponse(%*{"success": false, "error": e.msg})
 
 proc modelsUnloadPost*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
-  let model = ctx.getFormParams("model")
+  let payload = parseJson(ctx.request.body)
+  let model = payload{"model"}.getStr("")
   try:
-    discard s.router.unloadModel(model)
-  except CatchableError: discard
-  resp redirect("/models")
+    let res = s.router.unloadModel(model)
+    if res.success:
+      resp jsonResponse(%*{"success": true})
+    else:
+      resp jsonResponse(%*{"success": false, "error": res.error})
+  except CatchableError as e:
+    logError("routes", "unload model " & model & " failed: " & e.msg)
+    resp jsonResponse(%*{"success": false, "error": e.msg})
 
 proc modelsEditGet*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
@@ -331,7 +384,9 @@ proc pickChatModel(s: AppState): string =
     if m.status == msvLoaded:
       return m.id
   if models.len > 0:
-    discard s.router.loadModel(models[0].id)
+    let res = s.router.loadModel(models[0].id)
+    if not res.success:
+      raise newException(CatchableError, "failed to load model " & models[0].id & ": " & res.error)
     return models[0].id
   raise newException(CatchableError, "no models available")
 
@@ -342,23 +397,25 @@ proc getOrCreateChatSession(s: AppState, convId: int64): LlamaSession =
   result = newLlamaSession(s.db, s.router, convId, none(int64), model, "chat", 8192)
   s.chatSessions[convId] = result
 
-proc switchChatModel(s: AppState, convId: int64, modelId: string): bool =
-  ## Unloads the conversation's current model (if any and different) before
-  ## loading the requested one, since the router/GPU may not have room to
-  ## keep both loaded at once. Returns false (without touching the cached
-  ## session) if the load fails, so a failed switch doesn't silently strand
-  ## the conversation on a half-switched state.
-  if s.chatSessions.hasKey(convId):
-    let oldModel = s.chatSessions[convId].model
-    if oldModel != modelId:
-      let unloaded = s.router.unloadModel(oldModel)
-      logInfo("router", "unload " & oldModel & " -> success=" & $unloaded)
-  let loaded = s.router.loadModel(modelId)
-  logInfo("router", "load " & modelId & " -> success=" & $loaded)
-  if not loaded:
-    return false
+proc switchChatModel(s: AppState, convId: int64, modelId: string): ModelOpResult =
+  ## Unloads whatever the router reports as currently loaded (if different
+  ## from the target) before loading the requested one, since the
+  ## router/GPU may not have room to keep both loaded at once. This checks
+  ## the router's live status rather than the cached session's model, since
+  ## the two can disagree (e.g. a model was loaded/unloaded from the
+  ## /models page). Returns a failed `ModelOpResult` (without touching the
+  ## cached session) if the load fails, so a failed switch doesn't silently
+  ## strand the conversation on a half-switched state.
+  for m in s.router.listModels():
+    if m.status == msvLoaded and m.id != modelId:
+      let unloadRes = s.router.unloadModel(m.id)
+      if not unloadRes.success:
+        logError("router", "unload " & m.id & " before switching to " & modelId & " failed: " & unloadRes.error)
+  let loadRes = s.router.loadModel(modelId)
+  if not loadRes.success:
+    return loadRes
   s.chatSessions[convId] = newLlamaSession(s.db, s.router, convId, none(int64), modelId, "chat", 8192)
-  true
+  ModelOpResult(success: true, error: "")
 
 proc chatModelPost*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
@@ -366,14 +423,15 @@ proc chatModelPost*(ctx: Context) {.async, gcsafe.} =
   let payload = parseJson(ctx.request.body)
   let modelId = payload{"model"}.getStr("")
   try:
-    if switchChatModel(s, convId, modelId):
+    let res = switchChatModel(s, convId, modelId)
+    if res.success:
       logInfo("routes", "conversation " & $convId & " switched to model " & modelId)
       resp jsonResponse(%*{"success": true})
     else:
-      logInfo("routes", "conversation " & $convId & " failed to switch to model " & modelId & " (router declined load)")
-      resp jsonResponse(%*{"success": false, "error": "router declined to load model " & modelId})
+      logError("routes", "conversation " & $convId & " failed to switch to model " & modelId & ": " & res.error)
+      resp jsonResponse(%*{"success": false, "error": res.error})
   except CatchableError as e:
-    logInfo("routes", "model switch failed: " & $e.name & ": " & e.msg)
+    logError("routes", "model switch failed: " & $e.name & ": " & e.msg)
     resp jsonResponse(%*{"success": false, "error": e.msg})
 
 const titleGenThreshold = 3 ## generate a topic title once a conversation reaches this many messages
@@ -494,22 +552,32 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
       ## wait for the network at any point above.
       closeQueue(queue)
       await senderFut
-      if reply.content.len == 0:
-        logInfo("ws", "conversation " & $convId & " got an EMPTY reply from the model (cancelled=" & $st.cancelled & ")")
+      if reply.content.len == 0 and not st.cancelled:
+        ## An empty, non-cancelled reply means something went wrong
+        ## upstream (router unreachable mid-stream, model crash/OOM, a
+        ## malformed response, etc.) — don't silently store/show an empty
+        ## assistant message, surface it as an actual error instead.
+        let reason = if reply.error.len > 0: reply.error
+                     else: "model returned an empty reply — check server logs (router may have crashed or run out of VRAM)"
+        logError("ws", "conversation " & $convId & " got an EMPTY reply from the model: " & reason)
+        await ws.send($(%*{"type": "error", "content": reason}))
       else:
-        logInfo("router", "sendTurn reply (" & $reply.content.len & " chars, " &
-          $reply.reasoning.len & " reasoning char(s), cancelled=" & $st.cancelled & ")")
-      if reply.reasoning.len > 0:
-        discard s.orchestrator.appendMessage(convId, none(int64), "reasoning", reply.reasoning)
-      discard s.orchestrator.appendMessage(convId, none(int64), "assistant", reply.content)
-      await ws.send($(%*{"type": "assistant_message", "content": reply.content,
-                         "reasoning": reply.reasoning, "cancelled": st.cancelled}))
+        if reply.content.len == 0:
+          logInfo("ws", "conversation " & $convId & " got an EMPTY reply from the model (cancelled=" & $st.cancelled & ")")
+        else:
+          logInfo("router", "sendTurn reply (" & $reply.content.len & " chars, " &
+            $reply.reasoning.len & " reasoning char(s), cancelled=" & $st.cancelled & ")")
+        if reply.reasoning.len > 0:
+          discard s.orchestrator.appendMessage(convId, none(int64), "reasoning", reply.reasoning)
+        discard s.orchestrator.appendMessage(convId, none(int64), "assistant", reply.content)
+        await ws.send($(%*{"type": "assistant_message", "content": reply.content,
+                           "reasoning": reply.reasoning, "cancelled": st.cancelled}))
       let newTitle = maybeGenerateTitle(s, convId, sess, history)
       if newTitle.isSome:
         await ws.send($(%*{"type": "title_updated", "title": newTitle.get()}))
     except CatchableError as e:
-      logInfo("ws", "conversation " & $convId & " chat turn failed: " & $e.name & ": " & e.msg)
-      await ws.send($(%*{"type": "assistant_message", "content": "(error: " & e.msg & ")"}))
+      logError("ws", "conversation " & $convId & " chat turn failed: " & $e.name & ": " & e.msg)
+      await ws.send($(%*{"type": "error", "content": e.msg}))
   finally:
     st.generating = false
 

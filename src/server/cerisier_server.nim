@@ -1,7 +1,7 @@
 ## cerisier-server: Prologue web app + agent orchestrator + llama-server
 ## router supervisor. Entry point wiring all modules together.
 
-import std/[os, tables]
+import std/[os, tables, asyncdispatch]
 import prologue
 import ./config
 import ./db/database
@@ -9,6 +9,16 @@ import ./llama/[process, preset, router_client, session]
 import ./agent/conversation
 import ./tools/registry
 import ./web/routes
+
+proc superviseRouter(pm: ProcessManager) {.async.} =
+  ## Runs for the lifetime of the server: periodically drains the router
+  ## process's output (so recent lines are available if it crashes) and
+  ## checks whether it has died unexpectedly, restarting it with backoff
+  ## and logging the reason (best-effort) when it has.
+  while true:
+    await sleepAsync(3000)
+    pm.drainOutput()
+    discard pm.pollAndRestartIfCrashed()
 
 when isMainModule:
   let root = getAppDir().parentDir().parentDir() # src/server -> project root
@@ -24,12 +34,13 @@ when isMainModule:
   let orchestrator = newOrchestrator(db, router)
   let toolRegistry = newToolRegistry(cfg.toolsDir)
 
-  routes.state = AppState(db: db, router: router, orchestrator: orchestrator,
-    staticDir: root / "web" / "static", chatSessions: initTable[int64, LlamaSession](),
-    toolRegistry: toolRegistry, presetsPath: cfg.presetsPath)
-
   let pm = newProcessManager(cfg)
   pm.start()
+  asyncCheck superviseRouter(pm)
+
+  routes.state = AppState(db: db, router: router, orchestrator: orchestrator,
+    staticDir: root / "web" / "static", chatSessions: initTable[int64, LlamaSession](),
+    toolRegistry: toolRegistry, presetsPath: cfg.presetsPath, pm: pm)
 
   var app = newApp(settings = newSettings(
     appName = "cerisier",

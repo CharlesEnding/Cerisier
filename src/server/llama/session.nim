@@ -77,6 +77,7 @@ type
   StreamingReply* = object
     content*: string
     reasoning*: string
+    error*: string ## set when the router reported/caused a failure; content may still be partial
 
 proc sendTurnStreaming*(session: LlamaSession, messages: seq[(string, string)],
                          onToken: proc(tok: string): Future[void] {.gcsafe.},
@@ -87,15 +88,22 @@ proc sendTurnStreaming*(session: LlamaSession, messages: seq[(string, string)],
   ## aborted early by `isCancelled`. Reasoning/thinking tokens (if the model
   ## emits them) are streamed separately via `onReasoning`. Whatever text
   ## was accumulated so far (full or partial, if cancelled) is recorded as
-  ## the turn and returned.
+  ## the turn and returned. On transport failure `result.error` is set
+  ## instead of raising, so callers can report it to the user.
   let body = buildChatRequest(session.model, messages, stream = true)
-  let resp = await session.router.postJsonStream("/v1/chat/completions", body, onToken, onReasoning, isCancelled)
+  var resp: JsonNode
+  try:
+    resp = await session.router.postJsonStream("/v1/chat/completions", body, onToken, onReasoning, isCancelled)
+  except CatchableError as e:
+    result.error = e.msg
+    return
   let usage = resp{"usage"}
   if usage != nil:
     session.recordUsage(usage{"prompt_tokens"}.getInt(session.promptTokens),
                           usage{"completion_tokens"}.getInt(session.completionTokens))
   result.content = resp{"content"}.getStr("")
   result.reasoning = resp{"reasoning"}.getStr("")
+  result.error = resp{"error"}.getStr("")
   if result.content.len > 0:
     discard session.db.addTurn(session.id, "assistant", result.content)
 

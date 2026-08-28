@@ -121,6 +121,12 @@ proc postJsonStream*(rc: RouterClient, path: string, body: JsonNode,
       if jsonPayload == "[DONE]":
         break
       let node = parseJson(jsonPayload)
+      let errNode = node{"error"}
+      if errNode != nil:
+        let errMsg = errNode.getStr(errNode{"message"}.getStr($errNode))
+        logError("router", &"stream returned an error payload: {errMsg}")
+        result = %*{"content": fullText, "reasoning": fullReasoning, "error": errMsg}
+        return
       let choices = node{"choices"}
       if choices != nil and choices.kind == JArray and choices.len > 0:
         let delta = choices[0]{"delta"}
@@ -183,17 +189,37 @@ proc listModels*(rc: RouterClient): seq[ModelStatus] =
       result.add(modelStatusFromJson(node))
   logInfo("router", "GET /models -> " & $result.len & " model(s)")
 
-proc loadModel*(rc: RouterClient, modelId: string): bool =
+proc loadModel*(rc: RouterClient, modelId: string): ModelOpResult =
   let body = %*{"model": modelId}
-  let resp = rc.postJson("/models/load", body)
-  result = resp{"success"}.getBool(false)
-  logInfo("router", "POST /models/load model=" & modelId & " success=" & $result)
+  try:
+    let resp = rc.postJson("/models/load", body)
+    let success = resp{"success"}.getBool(false)
+    var errMsg = ""
+    if not success:
+      errMsg = resp{"error"}.getStr(resp{"message"}.getStr(resp{"detail"}.getStr("router declined to load model (no reason given)")))
+    result = ModelOpResult(success: success, error: errMsg)
+  except CatchableError as e:
+    result = ModelOpResult(success: false, error: e.msg)
+  if result.success:
+    logInfo("router", "POST /models/load model=" & modelId & " success=true")
+  else:
+    logError("router", "POST /models/load model=" & modelId & " failed: " & result.error)
 
-proc unloadModel*(rc: RouterClient, modelId: string): bool =
+proc unloadModel*(rc: RouterClient, modelId: string): ModelOpResult =
   let body = %*{"model": modelId}
-  let resp = rc.postJson("/models/unload", body)
-  result = resp{"success"}.getBool(false)
-  logInfo("router", "POST /models/unload model=" & modelId & " success=" & $result)
+  try:
+    let resp = rc.postJson("/models/unload", body)
+    let success = resp{"success"}.getBool(false)
+    var errMsg = ""
+    if not success:
+      errMsg = resp{"error"}.getStr(resp{"message"}.getStr(resp{"detail"}.getStr("router declined to unload model (no reason given)")))
+    result = ModelOpResult(success: success, error: errMsg)
+  except CatchableError as e:
+    result = ModelOpResult(success: false, error: e.msg)
+  if result.success:
+    logInfo("router", "POST /models/unload model=" & modelId & " success=true")
+  else:
+    logError("router", "POST /models/unload model=" & modelId & " failed: " & result.error)
 
 proc props*(rc: RouterClient, modelId: string = ""): JsonNode =
   let path = if modelId.len > 0: "/props?model=" & encodeUrl(modelId) else: "/props"
