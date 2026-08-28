@@ -60,6 +60,8 @@ body.sidebar-collapsed #sidebar {
 .tool-call.result.failed, .tool-call.result.timeout,
 .tool-call.result.protocol_error, .tool-call.result.validation_failed { border-left-color: #a33; }
 .tool-call.result.denied, .tool-call.result.killed { border-left-color: #666; }
+.tool-call summary, .reasoning summary { cursor: pointer; }
+
 .sub-conversation { border-left: 3px solid #7ee787; padding-left: 0.5rem; margin: 0.5rem 0; }
 .reasoning { color: #999; font-style: italic; border-left: 3px solid #666; padding-left: 0.5rem; }
 form.inline { display: inline; }

@@ -88,6 +88,15 @@ proc routerAwareFailureReason(s: AppState, fallback: string): string =
   of psStarting, psRunning:
     result = fallback
 
+proc escapeHtml(s: string): string =
+  result = newStringOfCap(s.len)
+  for c in s:
+    case c
+    of '&': result.add("&amp;")
+    of '<': result.add("&lt;")
+    of '>': result.add("&gt;")
+    else: result.add(c)
+
 # ---------------- Chat (the one live-updating page) ----------------
 
 proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} =
@@ -101,11 +110,38 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
   else:
     currentId = existing[0][0]
   var log = ""
-  for (id, parentId, role, content, createdAt) in s.db.messagesForConversation(currentId):
+  let msgs = s.db.messagesForConversation(currentId)
+  var i = 0
+  while i < msgs.len:
+    let (id, parentId, role, content, createdAt) = msgs[i]
     if role == "reasoning":
-      log.add(&"<details class=\"reasoning\"><summary>Reasoning</summary><div>{content}</div></details>\n")
+      log.add(&"<details class=\"reasoning\"><summary>Reasoning</summary><div>{escapeHtml(content)}</div></details>\n")
+      inc i
+    elif role == "assistant":
+      let calls = parseToolCalls(content)
+      let visible = stripToolCalls(content)
+      if visible.len > 0:
+        log.add(&"<div class=\"msg {role}\">{escapeHtml(visible)}</div>\n")
+      inc i
+      ## Tool call results are separate `tool`-role rows appended right
+      ## after this assistant message, one per parsed call, in order.
+      for call in calls:
+        var resultContent = ""
+        if i < msgs.len and msgs[i][2] == "tool":
+          resultContent = msgs[i][3]
+          inc i
+        if call.malformed:
+          log.add(&"""<details class="tool-call result failed"><summary>Tool call: malformed</summary><pre>{escapeHtml(call.error)}</pre></details>""" & "\n")
+        else:
+          let statusClass = block:
+            try: parseJson(resultContent){"ok"}.getBool(false)
+            except CatchableError: false
+          let cls = if statusClass: "succeeded" else: "failed"
+          log.add(&"""<details class="tool-call result {cls}"><summary>Tool call: {escapeHtml(call.name)}</summary><pre>{escapeHtml(call.argsJson)}</pre><pre>{escapeHtml(resultContent)}</pre></details>""" & "\n")
     else:
-      log.add(&"<div class=\"msg {role}\">{content}</div>\n")
+      log.add(&"<div class=\"msg {role}\">{escapeHtml(content)}</div>\n")
+      inc i
+
   let title = s.db.getConversationTitle(currentId)
   var currentModel = ""
   var modelOptions = ""
@@ -163,15 +199,6 @@ proc newConversationGet*(ctx: Context) {.async, gcsafe.} =
   resp redirect("/chat/" & $newId)
 
 # ---------------- Router status (diagnostics) ----------------
-
-proc escapeHtml(s: string): string =
-  result = newStringOfCap(s.len)
-  for c in s:
-    case c
-    of '&': result.add("&amp;")
-    of '<': result.add("&lt;")
-    of '>': result.add("&gt;")
-    else: result.add(c)
 
 proc routerPage*(ctx: Context) {.async, gcsafe.} =
   logInfo("routes", "GET /router")

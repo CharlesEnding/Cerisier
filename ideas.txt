@@ -68,3 +68,20 @@ Replies are objects:
 - **Form / intake collector** – build a simple form, share a link, collect responses into a spreadsheet
 - **Signature / approval chain** – route a doc to one or more people for sign-off; chase anyone who hasn't acted
 - **Reminder / nudge scheduler** – "ping the client if the invoice is 5 days overdue," "email the team Friday 3pm for standup"
+
+System:
+- **Registration & discovery** – tools declare themselves (name, description, schema); agent can list/search what's available
+- **Self-describing schema** – every tool exposes its input types, required/optional params, and output shape so the LLM can call it correctly
+- **Input validation** – check the agent's arguments against the schema *before* dispatching; reject early with a useful error
+- **Dispatch & invocation** – actually call the tool, pass args, await result; support sync and async
+- **Output normalization** – collapse varied return types (JSON, raw text, streams) into a consistent structure the agent can reason over
+- **Timeout & kill** – every call gets a max duration; the system can abort and return a "timed out" result
+- **Error handling & retry** – catch exceptions, retry with backoff on transient failures, surface a clean error string to the agent on permanent ones
+- **Idempotency** – a call carries a dedup key so a retry after a crash doesn't double-send an email or double-charge
+- **Concurrency / fan-out** – accept N tool calls in parallel, aggregate results, report partial failures without killing the batch
+- **Caching / memoization** – short-TTL cache keyed on (tool, args) so the same query in a 10-second window isn't re-executed
+- **Permission gating** – per-session, per-user, or per-tenant allowlist of which tools are callable (e.g., "free tier can't access the invoice tool")
+- **Stateful session management** – some tools hold state across calls (a browser tab, a DB connection); the system owns and recycles that lifecycle
+- **Dynamic enable/disable** – toggle a tool on/off at runtime (feature flag, maintenance, A/B) without redeploying the agent
+- **Fallback / degradation** – if tool A is down, the system can route to tool B or return a graceful "unavailable" instead of a raw stack trace
+- **Observability hook** – every call is logged with timestamp, caller, args, result, latency, cost, and error class; queryable after the fact

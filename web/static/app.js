@@ -78,13 +78,16 @@ function connectChat(conversationId) {
       return;
     }
     if (data.type === 'tool_call_pending') {
-      const div = document.createElement('div');
-      div.className = 'tool-call pending';
-      div.dataset.toolCallId = data.id;
+      const details = document.createElement('details');
+      details.className = 'tool-call pending';
+      details.open = true;
+      details.dataset.toolCallId = data.id;
+      const summary = document.createElement('summary');
+      summary.textContent = `Tool call: ${data.name}`;
+      details.appendChild(summary);
       const argsPreview = document.createElement('pre');
       argsPreview.textContent = data.args;
-      div.innerHTML = `<strong>Tool call requested:</strong> ${data.name} `;
-      div.appendChild(argsPreview);
+      details.appendChild(argsPreview);
       const btns = document.createElement('div');
       btns.className = 'tool-call-actions';
       const mkBtn = (label, msgType, always) => {
@@ -92,12 +95,12 @@ function connectChat(conversationId) {
         b.textContent = label;
         b.addEventListener('click', () => {
           ws.send(JSON.stringify({type: msgType, id: data.id, always}));
-          div.className = 'tool-call pending-resolved';
+          details.className = 'tool-call pending-resolved';
           btns.remove();
           const note = document.createElement('div');
           note.className = 'tool-call-note';
           note.textContent = `(${label.toLowerCase()} — waiting for result)`;
-          div.appendChild(note);
+          details.appendChild(note);
         });
         return b;
       };
@@ -112,21 +115,23 @@ function connectChat(conversationId) {
         ws.send(JSON.stringify({type: 'tool_call_kill', id: data.id}));
       });
       btns.appendChild(killBtn);
-      div.appendChild(btns);
-      log.appendChild(div);
+      details.appendChild(btns);
+      log.appendChild(details);
       log.scrollTop = log.scrollHeight;
       return;
     }
     if (data.type === 'tool_call_result') {
       const existing = log.querySelector(`[data-tool-call-id="${data.id}"]`);
       if (existing) existing.remove();
-      const div = document.createElement('div');
-      div.className = 'tool-call result ' + data.status;
+      const details = document.createElement('details');
+      details.className = 'tool-call result ' + data.status;
+      const summary = document.createElement('summary');
+      summary.textContent = `Tool call (${data.status})`;
+      details.appendChild(summary);
       const pre = document.createElement('pre');
       pre.textContent = data.result;
-      div.innerHTML = `<strong>Tool result (${data.status}):</strong> `;
-      div.appendChild(pre);
-      log.appendChild(div);
+      details.appendChild(pre);
+      log.appendChild(details);
       log.scrollTop = log.scrollHeight;
       return;
     }
