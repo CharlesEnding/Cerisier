@@ -208,8 +208,10 @@ proc renderPreset(p: ModelPreset): string =
   result.add(&"model = {p.modelPath}\n")
   if p.mmprojPath.len > 0:
     result.add(&"mmproj = {p.mmprojPath}\n")
+    result.add("image-max-tokens = 1024\n") # caps the vision encoder's compute buffer for big photos
   result.add(&"c = {p.ctxSize}\n")
   result.add(&"n-gpu-layers = {p.nGpuLayers}\n")
+  result.add("parallel = 1\n")
   if p.chatTemplateKwargs.len > 0:
     result.add(&"chat-template-kwargs = {p.chatTemplateKwargs}\n")
   result.add(&"temp = {p.temperature}\n")

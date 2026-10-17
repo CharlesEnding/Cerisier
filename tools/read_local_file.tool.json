@@ -1,9 +1,9 @@
 {
-  "name": "read_file",
+  "name": "read_local_file",
   "description": "Read a file's contents from the given path. No sandboxing.",
   "kind": "python",
   "location": "local",
-  "entrypoint": "tools/scripts/read_file.py",
+  "entrypoint": "tools/scripts/read_local_file.py",
   "input_schema": {
     "type": "object",
     "required": ["path"],

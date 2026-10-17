@@ -52,7 +52,8 @@ when isMainModule:
   let router = newRouterClient(cfg.llamaHost, cfg.llamaPort)
   let orchestrator = newOrchestrator(db, router)
   let toolRegistry = newToolRegistry(cfg.toolsDir)
-  let toolExecutor = newToolExecutor(db, toolRegistry, newCompanionRegistry())
+  let companions = newCompanionRegistry()
+  let toolExecutor = newToolExecutor(db, toolRegistry, companions)
 
   let pm = newProcessManager(cfg)
   pm.start()
@@ -63,7 +64,7 @@ when isMainModule:
     staticDir: root / "web" / "static", chatSessions: initTable[int64, LlamaSession](),
     toolRegistry: toolRegistry, toolExecutor: toolExecutor,
     pendingApprovals: initTable[int64, Future[void]](),
-    presetsPath: cfg.presetsPath, pm: pm)
+    presetsPath: cfg.presetsPath, pm: pm, companions: companions, dataDir: cfg.dataDir)
 
   var app = newApp(settings = newSettings(
     appName = "cerisier",
@@ -76,6 +77,10 @@ when isMainModule:
   app.get("/chat/{id}", chatPageWithId)
   app.get("/conversations/new", newConversationGet)
   app.post("/chat/{id}/model", chatModelPost)
+  app.post("/chat/{id}/tool-target", chatToolTargetPost)
+  app.post("/chat/{id}/todos/clear", todosClearPost)
+  app.post("/chat/{id}/upload", uploadPost)
+  app.get("/files/{fid}", fileGet)
   app.get("/history", historyPage)
   app.get("/models", modelsPage)
   app.post("/models/load", modelsLoadPost)
@@ -97,6 +102,7 @@ when isMainModule:
   app.get("/formats", formatsPage)
   app.post("/formats/new", formatsNewPost)
   app.get("/ws/chat/{id}", wsChat)
+  app.get("/ws/agent", wsAgent)
   app.get("/static/{file}", staticAsset)
 
   app.run()

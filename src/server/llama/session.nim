@@ -50,13 +50,37 @@ proc recordUsage*(session: LlamaSession, promptTokens, completionTokens: int) =
   session.completionTokens = completionTokens
   session.db.updateSessionTokens(session.id, promptTokens, completionTokens)
 
-proc buildChatRequest(model: string, messages: seq[(string, string)], stream: bool): JsonNode =
-  var msgs = newJArray()
+type
+  ChatMsg* = object
+    ## One chat-completions message. `images` holds `data:` URIs; when present
+    ## the message is sent as OpenAI-style content parts (text + image_url),
+    ## which llama-server accepts for models loaded with a vision projector.
+    role*: string
+    content*: string
+    images*: seq[string]
+
+proc chatMsg*(role, content: string, images: seq[string] = @[]): ChatMsg =
+  ChatMsg(role: role, content: content, images: images)
+
+proc toChatMsgs*(messages: seq[(string, string)]): seq[ChatMsg] =
+  result = @[]
   for (role, content) in messages:
-    msgs.add(%*{"role": role, "content": content})
+    result.add(chatMsg(role, content))
+
+proc buildChatRequest(model: string, messages: seq[ChatMsg], stream: bool): JsonNode =
+  var msgs = newJArray()
+  for m in messages:
+    if m.images.len == 0:
+      msgs.add(%*{"role": m.role, "content": m.content})
+    else:
+      var parts = newJArray()
+      parts.add(%*{"type": "text", "text": m.content})
+      for img in m.images:
+        parts.add(%*{"type": "image_url", "image_url": {"url": img}})
+      msgs.add(%*{"role": m.role, "content": parts})
   %*{"model": model, "messages": msgs, "stream": stream}
 
-proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): Future[string] {.async.} =
+proc sendTurn*(session: LlamaSession, messages: seq[ChatMsg]): Future[string] {.async.} =
   ## Sends a full-history chat turn to the router and returns the assistant
   ## text. Records token usage from the `usage` field. Raises on transport
   ## error — callers should catch when no router is reachable.
@@ -73,13 +97,17 @@ proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): Future[s
   else:
     result = ""
 
+proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): Future[string] {.async.} =
+  ## Convenience overload for plain (role, content) histories.
+  result = await session.sendTurn(toChatMsgs(messages))
+
 type
   StreamingReply* = object
     content*: string
     reasoning*: string
     error*: string ## set when the router reported/caused a failure; content may still be partial
 
-proc sendTurnStreaming*(session: LlamaSession, messages: seq[(string, string)],
+proc sendTurnStreaming*(session: LlamaSession, messages: seq[ChatMsg],
                          onToken: proc(tok: string): Future[void] {.gcsafe.},
                          onReasoning: proc(tok: string): Future[void] {.gcsafe.},
                          isCancelled: proc(): bool {.gcsafe.}): Future[StreamingReply] {.async, gcsafe.} =

@@ -91,21 +91,35 @@ proc find*(reg: ToolRegistry, name: string): ToolManifest =
       return t
   raise newException(KeyError, "unknown tool: " & name)
 
+proc toolCallPreamble*(): seq[string] =
+  ## The exact `<tool_call>` syntax the model must use (shared by the plain
+  ## fragment below and the full prompt built in agent/prompt.nim).
+  @[
+    "You have access to the following tools. To call one, emit exactly:",
+    """<tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>""",
+    "You may emit more than one in a single reply; each will be run and its result given back to you.",
+  ]
+
+proc toolDescriptionLines*(reg: ToolRegistry, allow: seq[string] = @[]): seq[string] =
+  ## One description + schema line pair per registered tool. A non-empty
+  ## `allow` restricts the list (used for sub-agents).
+  result = @[]
+  for t in reg.tools:
+    if allow.len > 0 and t.name notin allow:
+      continue
+    let approvalNote = if t.permission == ptAsk: " (requires user approval before it runs)"
+                        elif t.permission == ptDeny: " (currently disabled)"
+                        else: ""
+    result.add(&"- {t.name}: {t.description}{approvalNote}")
+    result.add(&"  input schema: {t.inputSchema}")
+
 proc systemPromptFragment*(reg: ToolRegistry): string =
   ## Tells the model what tools exist and the exact `<tool_call>` syntax to
   ## use to invoke one. Empty tool list -> empty string (no prompt bloat).
   if reg.tools.len == 0:
     return ""
-  var lines: seq[string] = @[]
-  lines.add("You have access to the following tools. To call one, emit exactly:")
-  lines.add("""<tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>""")
-  lines.add("You may emit more than one in a single reply; each will be run and its result given back to you.")
+  var lines = toolCallPreamble()
   lines.add("")
-  for t in reg.tools:
-    let approvalNote = if t.permission == ptAsk: " (requires user approval before it runs)"
-                        elif t.permission == ptDeny: " (currently disabled)"
-                        else: ""
-    lines.add(&"- {t.name}: {t.description}{approvalNote}")
-    lines.add(&"  input schema: {t.inputSchema}")
+  lines.add(toolDescriptionLines(reg))
   lines.join("\n")
 

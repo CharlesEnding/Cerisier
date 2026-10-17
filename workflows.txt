@@ -1,0 +1,19 @@
+This is a list of things I'd like to have been done automatically but had to do by hand
+
+---------------------------
+Title: Shorten the length of a book.
+---
+PFD doesn't fit in context size
+Create python script to split pdf into chapters by page number
+Page numbers were wrong
+Extract each chapter to a text file chapter_[].txt
+Clean each text file of pdf extraction artifacts to chapter_[]_clean.txt
+Shorten each cleaned file into chapter_[]_short.txt
+Write a script to compile all clean files and short files into two text files.
+---------------------------
+
+---------------------------
+Title: Transcribe administrative documents
+---
+Read each image in a folder and transcribe each into its own text file.
+---------------------------

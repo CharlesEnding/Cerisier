@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tool: read_file. Args: {"path": "..."}. Reads the given path as-is, no
+"""Tool: read_local_file. Args: {"path": "..."}. Reads the given path as-is, no
 sandboxing/path-traversal checks (the approval gate is the safety net)."""
 import json
 import sys

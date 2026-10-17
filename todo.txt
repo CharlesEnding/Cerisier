@@ -1,0 +1,20 @@
+1. Add context used so far.
+2. Add a system prompt page with editable prompt.
+3. Agents and subagents should have a common dedicated folder somewhere per chat. Writing in this folder shouldn't require approval. 
+4. "Ask for help tool call that takes in an answer."
+
+
+1. Expand input fields to allow newlines (shift+enter)
+
+2. Formatting:
+    LaTex, code (syntax highlighting for different languages), markdown, arbitrary color code definable by AI to make any topics easier to parse (for example, dates or factions in historical contexts, variables in math context, etc...)
+
+3. Sub-agents (offload tasks so the context size of the main agent doesn't get eaten up)
+
+4. Files as input and output
+
+5. Todo lists (created by agent, displayed as widget on top of input field, checked off as it goes along)
+
+6. Add option in chat for all tools to be run on the client or on the server by default
+
+

@@ -2,20 +2,25 @@
 ## Every page is a normal server-rendered full page load, except the chat
 ## page's WebSocket channel which live-updates in place.
 
-import std/[asyncdispatch, json, strformat, options, strutils, tables, sequtils, deques, times]
+import std/[asyncdispatch, json, strformat, options, strutils, tables, sequtils, deques, times, oids]
 import prologue
 import prologue/websocket
 import ./layout
 import ../db/database
 import ../skills/skills
 import ../formats/formats
+import ../files/files
 import ../llama/router_client
 import ../llama/session
 import ../llama/preset
 import ../llama/process
 import ../agent/conversation
+import ../agent/prompt
+import ../agent/subagent
 import ../tools/registry
 import ../tools/executor
+import ../tools/builtin
+import ../tools/runner_remote
 import ../tools/toolcalls
 import ../log
 import ../../common/types
@@ -33,6 +38,8 @@ type
     presetsPath*: string
     pm*: ProcessManager ## router process supervisor, for status reporting in the UI
     lastLoadAttempt*: string ## "modelId at HH:mm:ss" of the most recent load attempt, for diagnostics
+    companions*: CompanionRegistry ## connected client agents (cerisier-agent); shared with the executor
+    dataDir*: string ## runtime data dir; uploads / generated files live under <dataDir>/files
 
 var state*: AppState
 
@@ -97,7 +104,137 @@ proc escapeHtml(s: string): string =
     of '>': result.add("&gt;")
     else: result.add(c)
 
+proc escapeAttr(s: string): string =
+  ## For values placed inside a double-quoted HTML attribute.
+  result = newStringOfCap(s.len)
+  for c in s:
+    case c
+    of '&': result.add("&amp;")
+    of '<': result.add("&lt;")
+    of '>': result.add("&gt;")
+    of '"': result.add("&quot;")
+    of '\'': result.add("&#39;")
+    else: result.add(c)
+
 # ---------------- Chat (the one live-updating page) ----------------
+
+type
+  MsgRow = (int64, string, string, string, string) ## (id, parent_id or "", role, content, created_at)
+
+proc selectedAttr(cond: bool): string =
+  if cond: " selected" else: ""
+
+proc fileChipHtml(f: FileRow): string =
+  let url = "/files/" & $f.id
+  if f.mime.startsWith("image/"):
+    result = "<a class=\"file-chip file-image\" href=\"" & url & "\" target=\"_blank\"><img src=\"" & url &
+      "\" alt=\"" & escapeAttr(f.name) & "\"><span>" & escapeHtml(f.name) & "</span></a>"
+  else:
+    result = "<a class=\"file-chip\" href=\"" & url & "\" download=\"" & escapeAttr(f.name) &
+      "\">&#128196; " & escapeHtml(f.name) & " (" & humanSize(f.size) & ")</a>"
+
+proc attachmentsHtml(rows: seq[FileRow]): string =
+  if rows.len == 0:
+    return ""
+  result = "<div class=\"attachments\">"
+  for f in rows:
+    result.add(fileChipHtml(f))
+  result.add("</div>")
+
+proc resultFileChipHtml(resultContent: string): string =
+  ## A successful write_file result carries the created file; show a download
+  ## chip next to the tool call.
+  try:
+    let f = parseJson(resultContent){"data", "file"}
+    if f != nil and f.kind == JObject:
+      let row: FileRow = (id: f{"id"}.getInt().int64, conversationId: 0'i64, messageId: 0'i64,
+        name: f{"name"}.getStr(), storedName: "", mime: f{"mime"}.getStr(),
+        size: f{"size"}.getInt().int64, origin: "generated")
+      return attachmentsHtml(@[row])
+  except CatchableError:
+    discard
+  ""
+
+proc toolCallHtml(call: ParsedToolCall, resultContent: string): string =
+  if call.malformed:
+    return "<details class=\"tool-call result failed\"><summary>Tool call: malformed</summary><pre>" &
+      escapeHtml(call.error) & "</pre></details>\n"
+  var ok = false
+  try:
+    ok = parseJson(resultContent){"ok"}.getBool(false)
+  except CatchableError:
+    ok = false
+  let cls = if ok: "succeeded" else: "failed"
+  "<details class=\"tool-call result " & cls & "\"><summary>Tool call: " & escapeHtml(call.name) &
+    "</summary><pre>" & escapeHtml(call.argsJson) & "</pre><pre>" & escapeHtml(resultContent) &
+    "</pre></details>\n"
+
+proc renderMessageList(s: AppState, msgs: seq[MsgRow], children: Table[int64, seq[MsgRow]]): string {.gcsafe.}
+
+proc renderSubAgent(s: AppState, root: MsgRow, children: Table[int64, seq[MsgRow]],
+                    resultContent: string): string {.gcsafe.} =
+  ## A sub-agent's task is a child `user` message of the assistant message that
+  ## called spawn_subagent; everything it said/did hangs beneath that task row.
+  let task = root[3]
+  var ok = false
+  try:
+    ok = parseJson(resultContent){"ok"}.getBool(false)
+  except CatchableError:
+    ok = false
+  let short = if task.len > 90: trimToUtf8(task[0 ..< 90]) & "…" else: task
+  var inner = ""
+  if children.hasKey(root[0]):
+    inner = renderMessageList(s, children[root[0]], children)
+  let statusCls = if ok: "ok" else: "bad"
+  let statusTxt = if ok: "done" else: "failed"
+  result = "<details class=\"subagent\"><summary><span class=\"subagent-label\">Sub-agent: </span>" &
+    "<span class=\"subagent-task\">" & escapeHtml(short) & "</span><span class=\"subagent-status " &
+    statusCls & "\">" & statusTxt & "</span></summary><div class=\"subagent-body\"><div class=\"msg user\">" &
+    escapeHtml(task) & "</div>" & inner & "</div></details>\n"
+
+proc renderMessageList(s: AppState, msgs: seq[MsgRow], children: Table[int64, seq[MsgRow]]): string {.gcsafe.} =
+  ## Renders sibling messages of one level (the top level, or one sub-agent).
+  ## Assistant text is emitted raw (escaped) inside `data-md` blocks; the
+  ## browser turns it into Markdown/code/math (see web/static/rich.js).
+  result = ""
+  var i = 0
+  while i < msgs.len:
+    let (id, _, role, content, _) = msgs[i]
+    if role == "reasoning":
+      result.add("<details class=\"reasoning\"><summary>Reasoning</summary><div>" & escapeHtml(content) & "</div></details>\n")
+      inc i
+    elif role == "assistant":
+      let calls = parseToolCalls(content)
+      let visible = stripToolCalls(content)
+      if visible.len > 0:
+        result.add("<div class=\"msg assistant md\" data-md>" & escapeHtml(visible) & "</div>\n")
+      inc i
+      var subRoots: seq[MsgRow] = @[]
+      if children.hasKey(id):
+        for k in children[id]:
+          if k[2] == "user":
+            subRoots.add(k)
+      var subIdx = 0
+      ## Tool call results are separate `tool`-role rows appended right
+      ## after this assistant message, one per parsed call, in order.
+      for call in calls:
+        var resultContent = ""
+        if i < msgs.len and msgs[i][2] == "tool":
+          resultContent = msgs[i][3]
+          inc i
+        result.add(toolCallHtml(call, resultContent))
+        if not call.malformed:
+          if call.name == subagentToolName and subIdx < subRoots.len:
+            result.add(renderSubAgent(s, subRoots[subIdx], children, resultContent))
+            inc subIdx
+          result.add(resultFileChipHtml(resultContent))
+    elif role == "user":
+      result.add("<div class=\"msg user\">" & escapeHtml(content) &
+        attachmentsHtml(s.db.listFilesForMessage(id)) & "</div>\n")
+      inc i
+    else:
+      result.add("<div class=\"msg " & role & "\">" & escapeHtml(content) & "</div>\n")
+      inc i
 
 proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} =
   let s = getState()
@@ -109,38 +246,19 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
     currentId = s.orchestrator.startConversation("New conversation")
   else:
     currentId = existing[0][0]
-  var log = ""
-  let msgs = s.db.messagesForConversation(currentId)
-  var i = 0
-  while i < msgs.len:
-    let (id, parentId, role, content, createdAt) = msgs[i]
-    if role == "reasoning":
-      log.add(&"<details class=\"reasoning\"><summary>Reasoning</summary><div>{escapeHtml(content)}</div></details>\n")
-      inc i
-    elif role == "assistant":
-      let calls = parseToolCalls(content)
-      let visible = stripToolCalls(content)
-      if visible.len > 0:
-        log.add(&"<div class=\"msg {role}\">{escapeHtml(visible)}</div>\n")
-      inc i
-      ## Tool call results are separate `tool`-role rows appended right
-      ## after this assistant message, one per parsed call, in order.
-      for call in calls:
-        var resultContent = ""
-        if i < msgs.len and msgs[i][2] == "tool":
-          resultContent = msgs[i][3]
-          inc i
-        if call.malformed:
-          log.add(&"""<details class="tool-call result failed"><summary>Tool call: malformed</summary><pre>{escapeHtml(call.error)}</pre></details>""" & "\n")
-        else:
-          let statusClass = block:
-            try: parseJson(resultContent){"ok"}.getBool(false)
-            except CatchableError: false
-          let cls = if statusClass: "succeeded" else: "failed"
-          log.add(&"""<details class="tool-call result {cls}"><summary>Tool call: {escapeHtml(call.name)}</summary><pre>{escapeHtml(call.argsJson)}</pre><pre>{escapeHtml(resultContent)}</pre></details>""" & "\n")
+
+  ## Top-level messages vs. messages that hang under another one (sub-agents).
+  var top: seq[MsgRow] = @[]
+  var children = initTable[int64, seq[MsgRow]]()
+  for m in s.db.messagesForConversation(currentId):
+    if m[1].len == 0:
+      top.add(m)
     else:
-      log.add(&"<div class=\"msg {role}\">{escapeHtml(content)}</div>\n")
-      inc i
+      let pid = parseBiggestInt(m[1]).int64
+      if not children.hasKey(pid):
+        children[pid] = @[]
+      children[pid].add(m)
+  let log = renderMessageList(s, top, children)
 
   let title = s.db.getConversationTitle(currentId)
   var currentModel = ""
@@ -163,19 +281,46 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
       modelOptions.add(&"<option value=\"{m.id}\"{selected}>{m.id} ({m.status})</option>")
   except CatchableError as e:
     logError("router", "listModels failed: " & e.msg)
+
+  let toolTarget = s.db.getConversationToolTarget(currentId)
+  let agentCount = if s.companions != nil: s.companions.connectedCount() else: 0
+  let agentCls = if agentCount > 0: "ok" else: ""
+  let agentText = if agentCount > 0: "client agent connected" else: "no client agent connected"
+  let todosJson = $todosToJson(s.db.listTodos(currentId))
+  ## Embedded in a <script>: make sure model-written text can't close the tag.
+  let formatsScript = formatsJson(s.db).replace("<", "\\u003c")
+  let selDefault = selectedAttr(toolTarget != "server" and toolTarget != "client")
+  let selServer = selectedAttr(toolTarget == "server")
+  let selClient = selectedAttr(toolTarget == "client")
+
   let body = &"""
   {routerStatusBanner(s)}
   <div id="chat-header">
-    <h1 id="chat-title">{title}</h1>
+    <h1 id="chat-title">{escapeHtml(title)}</h1>
     <label for="model-select">Model:</label>
     <select id="model-select">{modelOptions}</select>
+    <label for="tool-target-select">Run tools on:</label>
+    <select id="tool-target-select" title="Where tool calls execute: each tool's own setting, the server, or the client machine (needs cerisier-agent running there)">
+      <option value="default"{selDefault}>Per tool</option>
+      <option value="server"{selServer}>Server</option>
+      <option value="client"{selClient}>Client</option>
+    </select>
+    <span id="agent-status" class="{agentCls}">{agentText}</span>
   </div>
   <div id="chat-log">{log}</div>
-  <form id="chat-form">
-    <input id="chat-input" type="text" placeholder="Message..." autocomplete="off">
-    <button type="submit">Send</button>
-    <button type="button" id="stop-btn" style="display:none">Stop</button>
-  </form>
+  <div id="chat-compose">
+    <div id="todo-widget" data-todos="{escapeAttr(todosJson)}" style="display:none"></div>
+    <div id="attachments"></div>
+    <div id="compose-note"></div>
+    <form id="chat-form">
+      <button type="button" id="attach-btn" title="Attach files">&#128206;</button>
+      <input type="file" id="file-input" multiple hidden>
+      <textarea id="chat-input" rows="1" placeholder="Message… (Enter to send, Shift+Enter for a new line)" autocomplete="off"></textarea>
+      <button type="submit">Send</button>
+      <button type="button" id="stop-btn" style="display:none">Stop</button>
+    </form>
+  </div>
+  <script>window.CERISIER_FORMATS = {formatsScript};</script>
   <script>connectChat({currentId});</script>
   """
   resp htmlResponse(page("Chat", "/", body))
@@ -242,7 +387,7 @@ proc historyPage*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
   var rows = ""
   for (id, title, createdAt) in s.db.listConversations():
-    rows.add(&"<tr><td><a href=\"/chat/{id}\">{title}</a></td><td>{createdAt}</td></tr>\n")
+    rows.add(&"<tr><td><a href=\"/chat/{id}\">{escapeHtml(title)}</a></td><td>{createdAt}</td></tr>\n")
   let body = &"<h1>History</h1><table><tr><th>Title</th><th>Created</th></tr>{rows}</table>"
   resp htmlResponse(page("History", "/history", body))
 
@@ -675,7 +820,7 @@ proc chatModelPost*(ctx: Context) {.async, gcsafe.} =
 const titleGenThreshold = 3 ## generate a topic title once a conversation reaches this many messages
 
 proc maybeGenerateTitle(s: AppState, convId: int64, sess: LlamaSession,
-                         history: seq[(string, string)]): Future[Option[string]] {.async.} =
+                         history: seq[ChatMsg]): Future[Option[string]] {.async.} =
   ## After a few messages, ask the model for a short topic title and store
   ## it, replacing the default "New conversation" placeholder.
   if history.len < titleGenThreshold:
@@ -683,9 +828,12 @@ proc maybeGenerateTitle(s: AppState, convId: int64, sess: LlamaSession,
   if s.db.getConversationTitle(convId) != "New conversation":
     return none(string)
   try:
-    let prompt = @[("user", "In 3-6 words, give a short topic title for this " &
-                            "conversation. Reply with only the title, no punctuation.")]
-    let rawTitle = await sess.sendTurn(history & prompt)
+    var msgs: seq[ChatMsg] = @[]
+    for m in history:
+      msgs.add(chatMsg(m.role, m.content))
+    msgs.add(chatMsg("user", "In 3-6 words, give a short topic title for this " &
+                             "conversation. Reply with only the title, no punctuation."))
+    let rawTitle = await sess.sendTurn(msgs)
     let title = rawTitle.strip(chars = {' ', '\n', '\t', '"', '.'})
     if title.len > 0:
       s.db.updateConversationTitle(convId, title)
@@ -704,6 +852,7 @@ type
     ## that ref (safe) rather than the enclosing proc's stack frame.
     generating: bool
     cancelled: bool
+    pendingIds: seq[int64] ## tool calls waiting for an approve/deny click (denied if the turn is cancelled)
 
   TokenQueue = ref object
     ## Unbounded queue decoupling llama.cpp's token stream from the
@@ -756,34 +905,166 @@ proc runSender(ws: WebSocket, q: TokenQueue): Future[void] {.async, gcsafe.} =
       q.closed = true
       break
 
+# ---------------- Agent loop helpers ----------------
+
+proc resolveApproval(s: AppState, id: int64) =
+  ## Wakes whoever is awaiting approval of this tool call. The entry is removed
+  ## first, so a late/duplicate approve for the same id can't act twice.
+  if s.pendingApprovals.hasKey(id):
+    let fut = s.pendingApprovals[id]
+    s.pendingApprovals.del(id)
+    if not fut.finished:
+      fut.complete()
+
+proc makeMainApproval(s: AppState, st: ChatTurnState, ws: WebSocket): ApprovalHook =
+  ## Approval prompt for tool calls issued by the main chat: the pending card
+  ## goes straight out over the WebSocket; the future resolves when the
+  ## approve/deny/cancel handler in `wsChat` calls `resolveApproval`.
+  proc ask(toolCallId: int64, toolName, argsJson, target: string): Future[void] {.gcsafe.} =
+    let fut = newFuture[void]("pendingApproval")
+    s.pendingApprovals[toolCallId] = fut
+    st.pendingIds.add(toolCallId)
+    asyncCheck ws.send($(%*{"type": "tool_call_pending", "id": toolCallId, "name": toolName,
+                            "args": argsJson, "target": target}))
+    result = fut
+  result = ask
+
+proc makeSubAgentHooks(s: AppState, st: ChatTurnState, queue: TokenQueue): SubAgentHooks =
+  ## Everything a sub-agent reports goes through `queue` so its events stay in
+  ## order with its streamed tokens (the queue is drained by `runSender`).
+  proc emitEvent(ev: JsonNode) {.gcsafe.} =
+    queue.push(ev)
+  proc askFn(toolCallId: int64, toolName, argsJson, target: string): Future[void] {.gcsafe.} =
+    let fut = newFuture[void]("subAgentApproval")
+    s.pendingApprovals[toolCallId] = fut
+    st.pendingIds.add(toolCallId)
+    queue.push(%*{"type": "tool_call_pending", "id": toolCallId, "name": toolName,
+                  "args": argsJson, "target": target})
+    result = fut
+  proc cancelledFn(): bool {.gcsafe.} =
+    st.cancelled
+  result = SubAgentHooks(emit: emitEvent, askApproval: askFn, isCancelled: cancelledFn)
+
+proc runBuiltinCall(s: AppState, convId, assistantMsgId: int64, ws: WebSocket,
+                    toolName, argsJson: string): Future[string] {.async, gcsafe.} =
+  ## Runs a built-in tool (todo_write, write_file, read_file, list_files),
+  ## records it like any other tool call and returns the result JSON.
+  let env = BuiltinEnv(db: s.db, dataDir: s.dataDir, convId: convId, messageId: assistantMsgId)
+  let res = runBuiltin(env, toolName, argsJson)
+  let status = if res.ok: $tcsSucceeded else: $tcsFailed
+  let tcId = s.db.createToolCall(assistantMsgId, toolName, $etServer, argsJson)
+  s.db.setToolCallResult(tcId, status, res.resultJson)
+  for ev in res.events:
+    await ws.send($ev)
+  await ws.send($(%*{"type": "tool_call_result", "id": tcId, "name": toolName, "args": argsJson,
+                     "status": status, "result": res.resultJson}))
+  result = res.resultJson
+
+proc runSubAgentCall(s: AppState, convId, assistantMsgId: int64, ws: WebSocket, st: ChatTurnState,
+                     sess: LlamaSession, argsJson: string): Future[string] {.async, gcsafe.} =
+  ## Executes `spawn_subagent`: runs the sub-agent to completion (streaming its
+  ## progress into the chat) and returns the result JSON for the parent.
+  let tcId = s.db.createToolCall(assistantMsgId, subagentToolName, $etServer, argsJson)
+  var outJson = ""
+  var status = $tcsFailed
+  let verr = validateBuiltinArgs(subagentToolName, argsJson)
+  if verr.len > 0:
+    outJson = $(%*{"ok": false, "error": verr})
+  else:
+    let a = parseJson(argsJson)
+    var allow: seq[string] = @[]
+    let toolNames = a{"tools"}
+    if toolNames != nil and toolNames.kind == JArray:
+      for t in toolNames:
+        allow.add(t.getStr())
+    ## Size the child session from the model's preset rather than the chat
+    ## session's conservative default.
+    var ctxSize = sess.ctxSize
+    let presetRow = database.getModelPreset(s.db, sess.model)
+    if presetRow.isSome:
+      ctxSize = presetRow.get().ctxSize
+    let queue = newTokenQueue()
+    let senderFut = runSender(ws, queue)
+    let env = SubAgentEnv(db: s.db, router: s.router, registry: s.toolRegistry,
+      executor: s.toolExecutor, dataDir: s.dataDir, convId: convId,
+      parentMessageId: assistantMsgId, model: sess.model, ctxSize: ctxSize,
+      hooks: makeSubAgentHooks(s, st, queue))
+    var res = SubAgentResult(ok: false, report: "", error: "", rounds: 0)
+    try:
+      res = await runSubAgent(env, a["task"].getStr(), a{"context"}.getStr(""), allow)
+    except CatchableError as e:
+      res.error = e.msg
+      logError("subagent", "crashed: " & $e.name & ": " & e.msg)
+    closeQueue(queue)
+    await senderFut
+    if res.ok:
+      status = $tcsSucceeded
+      outJson = $(%*{"ok": true, "data": {"report": res.report, "rounds": res.rounds}})
+    else:
+      let reason = if res.error.len > 0: res.error else: "the sub-agent failed"
+      outJson = $(%*{"ok": false, "error": reason})
+  s.db.setToolCallResult(tcId, status, outJson)
+  await ws.send($(%*{"type": "tool_call_result", "id": tcId, "name": subagentToolName,
+                     "args": argsJson, "status": status, "result": outJson}))
+  result = outJson
+
+proc buildHistory(s: AppState, convId: int64, visionOk: bool): seq[ChatMsg] =
+  ## The main model's context: system prompt (tools, formatting, todo + file
+  ## snapshot) plus the *top-level* messages. Messages that belong to a
+  ## sub-agent (they have a parent) are deliberately left out — keeping them
+  ## out of this context is the whole point of sub-agents.
+  result = @[]
+  let sys = buildSystemPrompt(s.db, s.toolRegistry, convId)
+  if sys.len > 0:
+    result.add(chatMsg("system", sys))
+  for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId):
+    if parentId.len > 0:
+      continue
+    if role == "reasoning":
+      continue ## not a valid chat-completions role; kept in the DB only for display
+    if role == "user":
+      let att = describeAttachments(s.db, s.dataDir, mid, visionOk)
+      if att.note.len > 0 or att.images.len > 0:
+        result.add(chatMsg(role, msgContent & att.note, att.images))
+        continue
+    result.add(chatMsg(role, msgContent))
+
 proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
-                        st: ChatTurnState, content: string) {.async, gcsafe.} =
+                        st: ChatTurnState, content: string, fileIds: seq[int64]) {.async, gcsafe.} =
   st.generating = true
   st.cancelled = false
   try:
-    discard s.orchestrator.appendMessage(convId, none(int64), "user", content)
-    logInfo("ws", "conversation " & $convId & " user message (" & $content.len & " chars)")
+    let userMsgId = s.orchestrator.appendMessage(convId, none(int64), "user", content)
+    for fid in fileIds:
+      s.db.attachFileToMessage(fid, userMsgId, convId)
+    logInfo("ws", "conversation " & $convId & " user message (" & $content.len & " chars, " &
+      $fileIds.len & " attachment(s))")
     try:
       let sess = await getOrCreateChatSession(s, convId)
 
-      proc currentHistory(): seq[(string, string)] =
-        result = @[]
-        let fragment = s.toolRegistry.systemPromptFragment()
-        if fragment.len > 0:
-          result.add(("system", fragment))
-        for (mid, parentId, role, msgContent, createdAt) in s.db.messagesForConversation(convId):
-          if role == "reasoning":
-            continue ## not a valid chat-completions role; kept in the DB only for display
-          result.add((role, msgContent))
+      ## Only ask the router whether the model can see images when there are any.
+      var visionOk = false
+      var hasImages = false
+      for f in s.db.listFilesForConversation(convId):
+        if isVisionImage(f.mime):
+          hasImages = true
+          break
+      if hasImages:
+        try:
+          let models = await s.router.listModels()
+          for m in models:
+            if m.id == sess.model and m.supportsVision:
+              visionOk = true
+        except CatchableError as e:
+          logInfo("router", "could not check vision support: " & e.msg)
 
-      const maxToolRounds = 5
-      var round = 0
       var finalReply: StreamingReply
-      var lastHistoryLenForTitle: seq[(string, string)] = @[]
+      var lastHistoryForTitle: seq[ChatMsg] = @[]
+      let askMain = makeMainApproval(s, st, ws)
 
       while true:
-        let history = currentHistory()
-        lastHistoryLenForTitle = history
+        let history = buildHistory(s, convId, visionOk)
+        lastHistoryForTitle = history
         logInfo("router", "sendTurn model=" & sess.model & " messages=" & $history.len)
         let queue = newTokenQueue()
         let senderFut = runSender(ws, queue)
@@ -806,31 +1087,34 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
           discard s.orchestrator.appendMessage(convId, none(int64), "reasoning", reply.reasoning)
 
         let calls = parseToolCalls(reply.content)
-        if calls.len == 0 or st.cancelled or round >= maxToolRounds:
-          let visible = stripToolCalls(reply.content)
-          discard s.orchestrator.appendMessage(convId, none(int64), "assistant", visible)
+        if calls.len == 0 or st.cancelled:
+          var visible = stripToolCalls(reply.content)
+          if visible.len > 0:
+            discard s.orchestrator.appendMessage(convId, none(int64), "assistant", visible)
           finalReply = StreamingReply(content: visible, reasoning: reply.reasoning, error: reply.error)
           break
 
         let assistantMsgId = s.orchestrator.appendMessage(convId, none(int64), "assistant", reply.content)
         for call in calls:
+          var resultJson = ""
           if call.malformed:
-            discard s.orchestrator.appendMessage(convId, none(int64), "tool",
-              $(%*{"ok": false, "error": call.error}))
-            continue
-          let toolCallId = s.toolExecutor.requestToolCall(convId, assistantMsgId, call.name, call.argsJson)
-          var (status, resultJson, toolName, argsJson) = s.db.getToolCall(toolCallId)
-          if status == $tcsPendingApproval:
-            let fut = newFuture[void]("pendingApproval")
-            s.pendingApprovals[toolCallId] = fut
-            await ws.send($(%*{"type": "tool_call_pending", "id": toolCallId, "name": call.name, "args": call.argsJson}))
-            await fut
-            s.pendingApprovals.del(toolCallId)
-            (status, resultJson, toolName, argsJson) = s.db.getToolCall(toolCallId)
-          discard s.orchestrator.appendMessage(convId, none(int64), "tool",
-            (if resultJson.len > 0: resultJson else: $(%*{"ok": false, "error": status})))
-          await ws.send($(%*{"type": "tool_call_result", "id": toolCallId, "status": status, "result": resultJson}))
-        inc round
+            resultJson = $(%*{"ok": false, "error": call.error})
+          elif st.cancelled:
+            resultJson = $(%*{"ok": false, "error": "cancelled"})
+          elif call.name == subagentToolName:
+            resultJson = await runSubAgentCall(s, convId, assistantMsgId, ws, st, sess, call.argsJson)
+          elif isBuiltin(call.name):
+            resultJson = await runBuiltinCall(s, convId, assistantMsgId, ws, call.name, call.argsJson)
+          else:
+            let d = await s.toolExecutor.dispatchToolCall(convId, assistantMsgId, call.name,
+                                                           call.argsJson, askMain)
+            resultJson = if d.resultJson.len > 0: d.resultJson else: $(%*{"ok": false, "error": d.status})
+            await ws.send($(%*{"type": "tool_call_result", "id": d.id, "name": call.name,
+                               "args": call.argsJson, "status": d.status, "result": d.resultJson}))
+          discard s.orchestrator.appendMessage(convId, none(int64), "tool", resultJson)
+        if st.cancelled:
+          finalReply = StreamingReply(content: "", reasoning: "", error: "")
+          break
 
       if finalReply.content.len == 0 and not st.cancelled:
         ## An empty, non-cancelled reply means something went wrong
@@ -850,7 +1134,7 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
             $finalReply.reasoning.len & " reasoning char(s), cancelled=" & $st.cancelled & ")")
         await ws.send($(%*{"type": "assistant_message", "content": finalReply.content,
                            "reasoning": finalReply.reasoning, "cancelled": st.cancelled}))
-      let newTitle = await maybeGenerateTitle(s, convId, sess, lastHistoryLenForTitle)
+      let newTitle = await maybeGenerateTitle(s, convId, sess, lastHistoryForTitle)
       if newTitle.isSome:
         await ws.send($(%*{"type": "title_updated", "title": newTitle.get()}))
     except CatchableError as e:
@@ -864,7 +1148,7 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
   let convId = parseInt(ctx.getPathParams("id")).int64
   var ws = await newWebSocket(ctx)
-  let st = ChatTurnState(generating: false, cancelled: false)
+  let st = ChatTurnState(generating: false, cancelled: false, pendingIds: @[])
   while ws.readyState == Open:
     try:
       let packet = await ws.receiveStrPacket()
@@ -875,6 +1159,13 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
         if st.generating:
           st.cancelled = true
           logInfo("ws", "conversation " & $convId & " cancel requested")
+          ## A turn that is waiting for an approve/deny click would otherwise
+          ## never notice the cancellation: deny whatever is pending.
+          let waiting = st.pendingIds
+          st.pendingIds = @[]
+          for pendingId in waiting:
+            s.toolExecutor.deny(pendingId)
+            resolveApproval(s, pendingId)
         else:
           logInfo("ws", "conversation " & $convId & " cancel requested but nothing is generating")
       of "user_message":
@@ -883,11 +1174,22 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
           await ws.send($(%*{"type": "assistant_message", "content": "(a reply is already being generated — please wait)"}))
         else:
           let content = node{"content"}.getStr("")
-          asyncCheck handleUserMessage(s, convId, ws, st, content)
+          var fileIds: seq[int64] = @[]
+          let fileNodes = node{"files"}
+          if fileNodes != nil and fileNodes.kind == JArray:
+            for fnode in fileNodes:
+              let fid = fnode.getInt(0).int64
+              if fid != 0:
+                fileIds.add(fid)
+          if content.strip().len > 0 or fileIds.len > 0:
+            asyncCheck handleUserMessage(s, convId, ws, st, content, fileIds)
       of "tool_call_approve":
         let id = node{"id"}.getInt(0).int64
         let always = node{"always"}.getBool(false)
-        if id != 0:
+        ## Only act on calls that are actually waiting for an answer: a replayed
+        ## or duplicated message must never re-run a tool.
+        if id != 0 and s.pendingApprovals.hasKey(id):
+          st.pendingIds.keepItIf(it != id)
           if always:
             let (_, _, toolName, _) = s.db.getToolCall(id)
             s.toolExecutor.setSessionPermission(convId, toolName, ptAuto)
@@ -895,19 +1197,18 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
           let (_, _, toolName, argsJson) = s.db.getToolCall(id)
           asyncCheck (proc() {.async, gcsafe.} =
             await s.toolExecutor.execute(id, toolName, argsJson)
-            if s.pendingApprovals.hasKey(id) and not s.pendingApprovals[id].finished:
-              s.pendingApprovals[id].complete()
+            resolveApproval(s, id)
           )()
       of "tool_call_deny":
         let id = node{"id"}.getInt(0).int64
         let always = node{"always"}.getBool(false)
-        if id != 0:
+        if id != 0 and s.pendingApprovals.hasKey(id):
+          st.pendingIds.keepItIf(it != id)
           if always:
             let (_, _, toolName, _) = s.db.getToolCall(id)
             s.toolExecutor.setSessionPermission(convId, toolName, ptDeny)
           s.toolExecutor.deny(id)
-          if s.pendingApprovals.hasKey(id) and not s.pendingApprovals[id].finished:
-            s.pendingApprovals[id].complete()
+          resolveApproval(s, id)
       of "tool_call_kill":
         let id = node{"id"}.getInt(0).int64
         if id != 0:
@@ -920,3 +1221,108 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
       logInfo("ws", "conversation " & $convId & " unexpected error: " & $e.name & ": " & e.msg)
       break
 
+# ---------------- Chat settings, uploads, downloads ----------------
+
+proc chatToolTargetPost*(ctx: Context) {.async, gcsafe.} =
+  ## "Run tools on": default (per tool) | server | client.
+  let s = getState()
+  try:
+    let convId = parseBiggestInt(ctx.getPathParams("id")).int64
+    let target = parseJson(ctx.request.body){"target"}.getStr("")
+    discard parseEnum[ToolTargetPref](target) ## raises ValueError for anything else
+    s.db.setConversationToolTarget(convId, target)
+    logInfo("routes", "conversation " & $convId & " runs tools on: " & target)
+    resp jsonResponse(%*{"success": true})
+  except CatchableError as e:
+    resp jsonResponse(%*{"success": false, "error": "invalid tool location: " & e.msg})
+
+proc todosClearPost*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  try:
+    let convId = parseBiggestInt(ctx.getPathParams("id")).int64
+    s.db.clearTodos(convId)
+    resp jsonResponse(%*{"success": true})
+  except CatchableError as e:
+    resp jsonResponse(%*{"success": false, "error": e.msg})
+
+proc uploadPost*(ctx: Context) {.async, gcsafe.} =
+  ## Raw-body upload (the browser POSTs the File itself; name/type travel in
+  ## the query string) so binary data never goes through form/JSON encoding.
+  let s = getState()
+  try:
+    let convId = parseBiggestInt(ctx.getPathParams("id")).int64
+    let name = ctx.getQueryParams("name", "file")
+    let mime = ctx.getQueryParams("type", "")
+    let data = ctx.request.body
+    if data.len == 0:
+      resp jsonResponse(%*{"success": false, "error": "empty upload"})
+      return
+    if data.len > maxUploadBytes:
+      resp jsonResponse(%*{"success": false, "error": "file too large (limit " & humanSize(maxUploadBytes.int64) & ")"})
+      return
+    let rec = saveFileBytes(s.db, s.dataDir, convId, name, mime, "upload", data)
+    logInfo("routes", "conversation " & $convId & " upload '" & rec.name & "' (" & humanSize(rec.size) & ")")
+    resp jsonResponse(%*{"success": true, "file": fileToJson(rec)})
+  except CatchableError as e:
+    logError("routes", "upload failed: " & $e.name & ": " & e.msg)
+    resp jsonResponse(%*{"success": false, "error": e.msg})
+
+proc fileGet*(ctx: Context) {.async, gcsafe.} =
+  ## Files are addressed by database id; the on-disk name comes from the
+  ## database, never from the request.
+  let s = getState()
+  var fid: int64
+  try:
+    fid = parseBiggestInt(ctx.getPathParams("fid")).int64
+  except ValueError:
+    resp plainTextResponse("bad file id", Http400)
+    return
+  let rec = s.db.getFile(fid)
+  if rec.isNone:
+    resp plainTextResponse("file not found", Http404)
+    return
+  let f = rec.get()
+  await staticFileResponse(ctx, f.storedName, convDir(s.dataDir, f.conversationId))
+
+# ---------------- WebSocket: client agents ----------------
+
+proc makeCompanionSender(ws: WebSocket): CompanionSender =
+  result = proc(msg: string): Future[void] {.gcsafe.} =
+    ws.send(msg)
+
+proc wsAgent*(ctx: Context) {.async, gcsafe.} =
+  ## A cerisier-agent running on the client machine connects here, advertises
+  ## its tools (`hello`), then receives `run_tool` jobs and returns
+  ## `tool_result` messages (see tools/runner_remote.nim for the protocol).
+  let s = getState()
+  var ws = await newWebSocket(ctx)
+  let companionId = $genOid()
+  logInfo("ws", "client agent connected: " & companionId)
+  while ws.readyState == Open:
+    try:
+      let packet = await ws.receiveStrPacket()
+      let node = parseJson(packet)
+      case node{"type"}.getStr("")
+      of "hello":
+        var tools: seq[ToolManifest] = @[]
+        let arr = node{"tools"}
+        if arr != nil and arr.kind == JArray:
+          for t in arr:
+            tools.add(ToolManifest(name: t{"name"}.getStr(""), description: t{"description"}.getStr("")))
+        s.companions.register(companionId, tools)
+        s.companions.registerSender(companionId, makeCompanionSender(ws))
+        s.companions.names[companionId] = node{"name"}.getStr("agent")
+        logInfo("ws", "client agent '" & node{"name"}.getStr("agent") & "' advertises " & $tools.len & " tool(s)")
+      of "tool_result":
+        let (jobId, jobResult) = parseResult(packet)
+        if jobId.len > 0:
+          s.companions.submitResult(jobId, jobResult)
+      else:
+        discard
+    except WebSocketError:
+      break
+    except CatchableError as e:
+      logInfo("ws", "client agent " & companionId & " error: " & $e.name & ": " & e.msg)
+      break
+  s.companions.unregister(companionId)
+  logInfo("ws", "client agent disconnected: " & companionId)

@@ -92,6 +92,7 @@ proc routerArgs(cfg: Config): seq[string] =
   result = @[
     "--host", cfg.llamaHost,
     "--port", $cfg.llamaPort,
+    "--models-max", "1", # a second resident model steals VRAM and makes the fit offload layers to CPU
   ]
   if fileExists(cfg.presetsPath):
     result.add(["--models-preset", cfg.presetsPath])

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tool: write_file. Args: {"path": "...", "content": "..."}. Writes the
+"""Tool: write_local_file. Args: {"path": "...", "content": "..."}. Writes the
 given path as-is, no sandboxing/path-traversal checks (the approval gate
 is the safety net). Creates parent directories as needed."""
 import json

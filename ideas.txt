@@ -1,3 +1,4 @@
+Message transformer raw message -> technical english or caveman
 
 Formats one might want to add:
 * LaTeX formatting
