@@ -6,4 +6,6 @@
 6. Choose thinking effort in chat combobox
 7. Tool & skill marketplace
 8. Add date & time & location tools
-9. Adaptive reasoning effort
+9. Adaptive reasoning effort (the agent chooses it himself)
+10. Add folder awareness and foldable file panel
+
