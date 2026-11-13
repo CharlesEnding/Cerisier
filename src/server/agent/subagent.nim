@@ -39,6 +39,7 @@ type
     registry*: ToolRegistry
     executor*: ToolExecutor
     dataDir*: string
+    promptFile*: string
     convId*: int64
     parentMessageId*: int64   ## assistant message that issued spawn_subagent
     model*: ModelEntry
@@ -62,7 +63,7 @@ proc runSubAgent*(env: SubAgentEnv, task, context: string, allow: seq[string]): 
   logInfo("subagent", "started (task " & $fullTask.len & " chars, model " & env.model.name & ")")
   env.hooks.emit(%*{"type": "subagent_start", "id": rootId, "task": fullTask})
 
-  let systemPrompt = buildSystemPrompt(db, env.registry, env.convId, forSubAgent = true, allow = allow) &
+  let systemPrompt = buildSystemPrompt(db, env.registry, env.convId, env.promptFile, forSubAgent = true, allow = allow) &
     "\n\n" & subAgentInstructions
   var history: seq[ChatMsg] = @[chatMsg("system", systemPrompt), chatMsg("user", fullTask)]
   var res = SubAgentResult(ok: false, report: "", error: "", rounds: 0)

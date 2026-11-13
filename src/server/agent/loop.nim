@@ -24,6 +24,7 @@ type
     registry*: ToolRegistry
     executor*: ToolExecutor
     dataDir*: string
+    promptFile*: string
 
   TurnResult* = object
     reply*: StreamingReply
@@ -35,7 +36,7 @@ proc buildHistory*(env: LoopEnv, convId: int64, visionOk: bool): seq[ChatMsg] =
   ## sub-agent (they have a parent) are deliberately left out — keeping them
   ## out of this context is the whole point of sub-agents.
   result = @[]
-  let sys = buildSystemPrompt(env.db, env.registry, convId)
+  let sys = buildSystemPrompt(env.db, env.registry, convId, env.promptFile)
   if sys.len > 0:
     result.add(chatMsg("system", sys))
   for (mid, parentId, role, msgContent, createdAt) in env.db.messagesForConversation(convId):
@@ -83,7 +84,7 @@ proc runSubAgentCall(env: LoopEnv, convId, assistantMsgId: int64, hooks: AgentHo
       for t in toolNames:
         allow.add(t.getStr())
     let senv = SubAgentEnv(db: env.db, api: env.api, registry: env.registry,
-      executor: env.executor, dataDir: env.dataDir, convId: convId,
+      executor: env.executor, dataDir: env.dataDir, promptFile: env.promptFile, convId: convId,
       parentMessageId: assistantMsgId, model: sess.entry, hooks: hooks)
     var res = SubAgentResult(ok: false, report: "", error: "", rounds: 0)
     try:

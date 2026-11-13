@@ -56,7 +56,7 @@ proc builtinSpecs*(): seq[BuiltinSpec] =
       subAgentOk: false),
     BuiltinSpec(
       name: "write_file",
-      description: "Store a file ON THE SERVER as a download link in the chat. Only use this when the user asks for a server-side download; to save a file on the user's own computer use write_local_file instead. Text by default; use encoding \"base64\" for binary content.",
+      description: "Store a file in this conversation as a download link in the chat. Only use this when the user asks for a download; to save a file at a path on disk use write_local_file instead. Text by default; use encoding \"base64\" for binary content.",
       inputSchema: """{"type":"object","required":["name","content"],"properties":{"name":{"type":"string"},"content":{"type":"string"},"encoding":{"type":"string","enum":["utf8","base64"]}}}""",
       subAgentOk: true),
     BuiltinSpec(

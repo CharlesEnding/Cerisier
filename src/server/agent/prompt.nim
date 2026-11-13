@@ -1,42 +1,71 @@
-## Builds the system prompt for the main chat and for sub-agents: tool syntax,
-## tool list (external manifests + built-ins), usage guidance, the output
-## formatting the UI can render (see formats.nim / web/static/rich.js), and a
-## snapshot of the conversation's todo list and files.
+## Builds the system prompt for the main chat and for sub-agents from the
+## template in config/system_prompt.md (read on every call, so edits apply to
+## the next turn without a rebuild). The template holds the static text; the
+## parts that change are filled in here:
+##   {{date}} {{os}}   current date, host OS
+##   {{tools}}         tool-call syntax plus external and built-in tool list
+##   {{formats}}       what the chat UI can render (see formats.nim / rich.js)
+##   {{todos}}         the conversation's todo list (main agent only)
+##   {{files}}         the conversation's files
+##   {{#main}}...{{/main}}  kept for the main agent, dropped for sub-agents
 
-import std/strutils
+import std/[strutils, os, times, tables]
 import ../db/database
 import ../formats/formats
 import ../tools/registry
 import ../tools/builtin
 import ../files/files
+import ../log
 
-const maxFilesListed = 30
+const
+  maxFilesListed = 30
+  fallbackTemplate = "{{tools}}\n\n{{formats}}\n\n{{todos}}\n\n{{files}}"
 
-proc buildSystemPrompt*(db: Database, reg: ToolRegistry, convId: int64,
+proc loadTemplate(path: string): string =
+  if fileExists(path):
+    return readFile(path)
+  logWarn("prompt", "template not found: " & path & " (using a minimal one)")
+  fallbackTemplate
+
+proc renderTemplate(tpl: string, vars: Table[string, string], forSubAgent: bool): string =
+  result = tpl
+  const openTag = "{{#main}}"
+  const closeTag = "{{/main}}"
+  if forSubAgent:
+    while true:
+      let a = result.find(openTag)
+      if a < 0:
+        break
+      let b = result.find(closeTag, a)
+      if b < 0:
+        result = result[0 ..< a]
+        break
+      result = result[0 ..< a] & result[b + closeTag.len .. ^1]
+  else:
+    result = result.replace(openTag, "").replace(closeTag, "")
+  for k, v in vars:
+    result = result.replace("{{" & k & "}}", v)
+  while "\n\n\n" in result:
+    result = result.replace("\n\n\n", "\n\n")
+  result = result.strip()
+
+proc buildSystemPrompt*(db: Database, reg: ToolRegistry, convId: int64, promptFile: string,
                         forSubAgent = false, allow: seq[string] = @[]): string =
   ## `allow` (sub-agents only) restricts which external tools are listed;
   ## empty means all of them.
-  var sections: seq[string] = @[]
+  var vars = initTable[string, string]()
+  vars["date"] = now().format("yyyy-MM-dd (dddd)")
+  vars["os"] = hostOS
 
-  # ---- tools
   var tools = toolCallPreamble()
   tools.add("")
   tools.add(toolDescriptionLines(reg, allow))
   tools.add(builtinPromptLines(forSubAgent))
-  sections.add(tools.join("\n"))
+  vars["tools"] = tools.join("\n")
 
-  # ---- guidance for the built-ins (main agent only: sub-agents get a task-specific prompt)
-  if not forSubAgent:
-    sections.add("""## Planning and delegation
-For work with three or more steps, first call todo_write with the whole plan (every item "pending"). Call it again whenever an item changes, with exactly one item "in_progress" at a time, until everything is "completed". Always send the complete list.
-Use spawn_subagent to keep this conversation's context small: for reading or analysing large files, going through many items one by one (e.g. each image in a folder), research, or any self-contained multi-step job. A sub-agent starts with an empty context and sees only the task and context you give it, so include everything it needs; only its final report comes back to you. Do small jobs yourself.""")
+  vars["formats"] = formatsPromptFragment(db)
 
-  sections.add("""## Files
-Files the user attaches are listed on their message; small text files are pasted in full. Use list_files and read_file for the rest. When the user wants a document, script or data file saved, write it to their computer with write_local_file (runs on their machine; do not paste the content into the chat) and tell them the path. Use write_file only when they ask for a server-side download link; its chip in the chat is the only link that works for server files, so never invent /files/ URLs yourself.""")
-
-  sections.add(formatsPromptFragment(db))
-
-  # ---- current state
+  vars["todos"] = ""
   if not forSubAgent:
     let todos = db.listTodos(convId)
     if todos.len > 0:
@@ -48,8 +77,9 @@ Files the user attaches are listed on their message; small text files are pasted
         elif t.status == "in_progress":
           mark = "[>]"
         lines.add("- " & mark & " " & t.content)
-      sections.add(lines.join("\n"))
+      vars["todos"] = lines.join("\n")
 
+  vars["files"] = ""
   let fileRows = db.listFilesForConversation(convId)
   if fileRows.len > 0:
     var lines = @["## Files in this conversation"]
@@ -58,6 +88,6 @@ Files the user attaches are listed on their message; small text files are pasted
         lines.add("- … and " & $(fileRows.len - maxFilesListed) & " more (use list_files)")
         break
       lines.add("- " & f.name & " (" & humanSize(f.size) & ", " & f.origin & ")")
-    sections.add(lines.join("\n"))
+    vars["files"] = lines.join("\n")
 
-  sections.join("\n\n")
+  renderTemplate(loadTemplate(promptFile), vars, forSubAgent)

@@ -30,6 +30,7 @@ type
     dataDir*: string            ## sqlite db + misc runtime data
     dbPath*: string
     toolsDir*: string           ## directory of *.tool.json manifests
+    promptFile*: string         ## system prompt template
 
 const
   defaultMaxTokens* = 8192
@@ -45,6 +46,7 @@ proc defaultConfig*(root: string): Config =
     dataDir: root / "data",
     dbPath: root / "data" / "cerisier.db",
     toolsDir: root / "tools",
+    promptFile: root / "config" / "system_prompt.md",
   )
 
 proc parseSimpleKv(path: string): Table[string, string] =
@@ -115,6 +117,7 @@ proc loadConfig*(root: string, configPath: string = ""): Config =
     of "data_dir": result.dataDir = value
     of "db_path": result.dbPath = value
     of "tools_dir": result.toolsDir = value
+    of "prompt_file": result.promptFile = value
     else: discard
   result.apiUrl = result.apiUrl.strip(chars = {'/'}, leading = false)
   result.apiKey = readSecret(apiKeyEnv, apiKeyFile)

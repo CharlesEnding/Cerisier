@@ -4,3 +4,6 @@
 4. "Ask for help tool call that takes in an answer."
 5. Fix loops
 6. Choose thinking effort in chat combobox
+7. Tool & skill marketplace
+8. Add date & time & location tools
+9. Adaptive reasoning effort

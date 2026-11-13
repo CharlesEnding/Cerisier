@@ -28,7 +28,7 @@ when isMainModule:
   routes.state = AppState(cfg: cfg, db: db, api: api, orchestrator: orchestrator,
     staticDir: root / "web" / "static", chatSessions: initTable[int64, ChatSession](),
     toolRegistry: toolRegistry, toolExecutor: toolExecutor,
-    loop: LoopEnv(db: db, api: api, registry: toolRegistry, executor: toolExecutor, dataDir: cfg.dataDir),
+    loop: LoopEnv(db: db, api: api, registry: toolRegistry, executor: toolExecutor, dataDir: cfg.dataDir, promptFile: cfg.promptFile),
     pendingApprovals: initTable[int64, Future[void]](), dataDir: cfg.dataDir)
 
   var app = newApp(settings = newSettings(

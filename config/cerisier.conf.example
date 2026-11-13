@@ -14,5 +14,8 @@ api_url = http://192.168.1.6:8000/v1
 # Models Cerisier may use; same shape as Zed's available_models.
 # models_file = config/models.json
 
+# System prompt template, re-read every turn (default config/system_prompt.md).
+# prompt_file = config/system_prompt.md
+
 # Enables load/unload buttons; needs a backend that implements /models/load|unload.
 # model_management = false
