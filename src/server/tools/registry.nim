@@ -94,7 +94,8 @@ proc toolCallPreamble*(): seq[string] =
   ## fragment below and the full prompt built in agent/prompt.nim).
   @[
     "You have access to the following tools. To call one, emit exactly:",
-    """<tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>""",
+    "<tool_call>\n<function=tool_name>\n<parameter=param_name>\nvalue\n</parameter>\n</function>\n</tool_call>",
+    "Write string values as plain text, with no quotes or escaping. Write objects, arrays, numbers and booleans as JSON.",
     "You may emit more than one in a single reply; each will be run and its result given back to you.",
   ]
 

@@ -1,7 +1,7 @@
-## Parses `<tool_call>{"name": "...", "arguments": {...}}</tool_call>` tags
-## out of raw LLM text output. Custom, model-agnostic convention (no native
-## function-calling) — see plan decisions. Non-nested, simple scan similar
-## in spirit to ../formats/formats.nim's tag scanner.
+## Parses `<tool_call><function=NAME><parameter=KEY>VALUE</parameter></function></tool_call>`
+## (Qwen's native format) out of raw LLM text; the older JSON body
+## `{"name": "...", "arguments": {...}}` is still accepted. Non-nested, simple
+## scan similar in spirit to ../formats/formats.nim's tag scanner.
 
 import std/[json, strutils]
 
@@ -16,7 +16,50 @@ const
   openTag = "<tool_call>"
   closeTag = "</tool_call>"
 
-const expectedForm = """expected exactly <tool_call>{"name": "tool_name", "arguments": {...}}</tool_call>"""
+const
+  fnOpen = "<function="
+  fnClose = "</function>"
+  paramOpen = "<parameter="
+  paramClose = "</parameter>"
+
+const expectedForm = "expected exactly <tool_call>\n<function=tool_name>\n<parameter=param_name>\nvalue\n</parameter>\n</function>\n</tool_call>"
+
+proc parseXmlCall(body: string): ParsedToolCall =
+  ## Qwen form: `<function=NAME>` then `<parameter=KEY>VALUE</parameter>` per argument.
+  let nameEnd = body.find('>', fnOpen.len)
+  if nameEnd < 0:
+    raise newException(ValueError, "unterminated <function=...> tag")
+  let name = body[fnOpen.len ..< nameEnd].strip()
+  if name.len == 0:
+    raise newException(ValueError, "empty function name")
+  var args = newJObject()
+  var pos = nameEnd + 1
+  while true:
+    let pOpen = body.find(paramOpen, pos)
+    if pOpen < 0:
+      break
+    let keyEnd = body.find('>', pOpen + paramOpen.len)
+    if keyEnd < 0:
+      raise newException(ValueError, "unterminated <parameter=...> tag")
+    let key = body[pOpen + paramOpen.len ..< keyEnd].strip()
+    let valEnd = body.find(paramClose, keyEnd + 1)
+    if valEnd < 0:
+      raise newException(ValueError, "missing </parameter> for '" & key & "'")
+    var val = body[keyEnd + 1 ..< valEnd]
+    if val.startsWith("\n"): val = val[1 .. ^1]
+    if val.endsWith("\n"): val.setLen(val.len - 1)
+    pos = valEnd + paramClose.len
+    # Strings stay raw; objects, arrays, numbers and booleans are read as JSON.
+    let t = val.strip()
+    var node = newJString(val)
+    if t.len > 0 and (t[0] in {'{', '[', '-'} or t[0] in Digits or t in ["true", "false", "null"]):
+      try: node = parseJson(t)
+      except CatchableError: discard
+    args[key] = node
+  # Tolerate `<parameter=arguments>{...}</parameter>` wrapping the whole argument object.
+  if args.len == 1 and args.hasKey("arguments") and args["arguments"].kind == JObject:
+    args = args["arguments"]
+  ParsedToolCall(name: name, argsJson: $args)
 
 proc parseBareNameCall(body: string): ParsedToolCall =
   ## Lenient fallback for models that write `{"tool", "arguments": {...}}` or
@@ -58,6 +101,14 @@ proc parseToolCalls*(text: string): seq[ParsedToolCall] =
       break ## unterminated tag: stop scanning, treat as no more calls
     let body = text[bodyStart ..< closeIdx].strip()
     pos = closeIdx + closeTag.len
+    let snippet = if body.len > 160: body[0 ..< 160] & "..." else: body
+    if body.startsWith(fnOpen):
+      try:
+        result.add(parseXmlCall(body))
+      except CatchableError as e:
+        result.add(ParsedToolCall(malformed: true,
+          error: "malformed tool_call (" & e.msg & "); you wrote: " & snippet & " -- " & expectedForm))
+      continue
     try:
       let node = parseJson(body)
       let name = node{"name"}.getStr("")
@@ -71,9 +122,8 @@ proc parseToolCalls*(text: string): seq[ParsedToolCall] =
       try:
         result.add(parseBareNameCall(body))
       except CatchableError:
-        let snippet = if body.len > 160: body[0 ..< 160] & "..." else: body
         result.add(ParsedToolCall(malformed: true,
-          error: "malformed tool_call JSON (" & e.msg & "); you wrote: " & snippet & " -- " & expectedForm))
+          error: "malformed tool_call (" & e.msg & "); you wrote: " & snippet & " -- " & expectedForm))
 
 proc stripToolCalls*(text: string): string =
   result = ""
