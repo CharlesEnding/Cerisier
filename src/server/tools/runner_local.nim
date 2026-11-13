@@ -25,9 +25,7 @@ proc startLocal*(manifest: ToolManifest, argsJson: string): Process =
 proc readAndClose*(p: Process, maxBytes: int = 1_000_000): string =
   ## Drains whatever output the (already-exited, or just-killed) process
   ## produced. Reads in bounded chunks from the output stream rather than
-  ## `outputStream.readAll()`'s unbounded slurp, following the same
-  ## non-blocking-drain-in-spirit convention used elsewhere in this
-  ## codebase (see ../llama/process.nim's `drainAvailableOutput`), capped
+  ## `outputStream.readAll()`'s unbounded slurp, capped
   ## so a runaway/huge-output child can never exhaust memory here.
   defer: p.close()
   var output = ""

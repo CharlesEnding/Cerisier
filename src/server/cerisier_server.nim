@@ -1,43 +1,16 @@
-## cerisier-server: Prologue web app + agent orchestrator + llama-server
-## router supervisor. Entry point wiring all modules together.
+## cerisier-server: Prologue web app + agent loop, talking to an
+## OpenAI-compatible model backend. Entry point wiring all modules together.
 
 import std/[os, tables, asyncdispatch]
 import prologue
 import ./config
 import ./db/database
-import ./llama/[process, preset, router_client, session]
-import ./agent/conversation
+import ./api/[client, session]
+import ./agent/[conversation, loop]
 import ./tools/registry
 import ./tools/executor
-import ./tools/runner_remote
 import ./web/routes
-
-proc superviseRouterLoop(pm: ProcessManager) {.thread.} =
-  ## Runs for the lifetime of the server on its own OS thread: periodically
-  ## checks whether the router process has died unexpectedly, restarting it
-  ## with backoff and logging the reason (best-effort) when it has. Also
-  ## periodically drains the router's raw stdout/stderr into the log file
-  ## so the /router page reflects near-real-time output instead of only a
-  ## single dump at process exit.
-  ##
-  ## This deliberately runs on a plain OS thread with a blocking `sleep`,
-  ## NOT as an `{.async.}` proc scheduled via `asyncCheck`/`sleepAsync` on
-  ## std/asyncdispatch's global dispatcher. Prologue's default backend
-  ## (`httpx`) implements its own internal event loop/reactor and never
-  ## drives std/asyncdispatch's dispatcher itself — so a future scheduled
-  ## via `asyncCheck` on that dispatcher simply never gets its callbacks
-  ## run. That silently starved this exact loop for this project's entire
-  ## debugging history: `drainAvailableOutput`/`pollAndRestartIfCrashed`
-  ## were never actually being called even once, which is why the
-  ## `/router` page only ever showed the synchronous `[cerisier]` lines
-  ## written directly from HTTP route handlers (those run fine, driven by
-  ## httpx's own request handling) and never any real `[stdout]` content
-  ## from the router process itself, no matter what was fixed on the
-  ## capture-mechanism or llama-server side.
-  while true:
-    sleep(250)
-    pm.drainAvailableOutput()
-    discard pm.pollAndRestartIfCrashed()
+import ./web/openai
 
 when isMainModule:
   let root = getAppDir().parentDir().parentDir() # src/server -> project root
@@ -47,24 +20,16 @@ when isMainModule:
   let db = database.open(cfg.dbPath)
   db.migrate()
 
-  ensurePresetsFile(db, cfg.presetsPath, cfg.modelsDir)
-
-  let router = newRouterClient(cfg.llamaHost, cfg.llamaPort)
-  let orchestrator = newOrchestrator(db, router)
+  let api = newApiClient(cfg.apiUrl, cfg.apiKey)
+  let orchestrator = newOrchestrator(db)
   let toolRegistry = newToolRegistry(cfg.toolsDir)
-  let companions = newCompanionRegistry()
-  let toolExecutor = newToolExecutor(db, toolRegistry, companions)
+  let toolExecutor = newToolExecutor(db, toolRegistry)
 
-  let pm = newProcessManager(cfg)
-  pm.start()
-  var supervisorThread: Thread[ProcessManager]
-  createThread(supervisorThread, superviseRouterLoop, pm)
-
-  routes.state = AppState(db: db, router: router, orchestrator: orchestrator,
-    staticDir: root / "web" / "static", chatSessions: initTable[int64, LlamaSession](),
+  routes.state = AppState(cfg: cfg, db: db, api: api, orchestrator: orchestrator,
+    staticDir: root / "web" / "static", chatSessions: initTable[int64, ChatSession](),
     toolRegistry: toolRegistry, toolExecutor: toolExecutor,
-    pendingApprovals: initTable[int64, Future[void]](),
-    presetsPath: cfg.presetsPath, pm: pm, companions: companions, dataDir: cfg.dataDir)
+    loop: LoopEnv(db: db, api: api, registry: toolRegistry, executor: toolExecutor, dataDir: cfg.dataDir),
+    pendingApprovals: initTable[int64, Future[void]](), dataDir: cfg.dataDir)
 
   var app = newApp(settings = newSettings(
     appName = "cerisier",
@@ -77,7 +42,6 @@ when isMainModule:
   app.get("/chat/{id}", chatPageWithId)
   app.get("/conversations/new", newConversationGet)
   app.post("/chat/{id}/model", chatModelPost)
-  app.post("/chat/{id}/tool-target", chatToolTargetPost)
   app.post("/chat/{id}/todos/clear", todosClearPost)
   app.post("/chat/{id}/upload", uploadPost)
   app.get("/files/{fid}", fileGet)
@@ -85,12 +49,7 @@ when isMainModule:
   app.get("/models", modelsPage)
   app.post("/models/load", modelsLoadPost)
   app.post("/models/unload", modelsUnloadPost)
-  app.get("/models/edit/{id}", modelsEditGet)
-  app.post("/models/save", modelsSavePost)
-  app.post("/models/delete", modelsDeletePost)
   app.get("/models/status.json", modelsStatusJson)
-  app.get("/router", routerPage)
-  app.get("/router/status.json", routerStatusJson)
   app.get("/tools", toolsPage)
   app.get("/tools/edit/{name}", toolsEditGet)
   app.post("/tools/new", toolsNewPost)
@@ -102,7 +61,8 @@ when isMainModule:
   app.get("/formats", formatsPage)
   app.post("/formats/new", formatsNewPost)
   app.get("/ws/chat/{id}", wsChat)
-  app.get("/ws/agent", wsAgent)
   app.get("/static/{file}", staticAsset)
+  app.get("/v1/models", v1Models)
+  app.post("/v1/chat/completions", v1ChatCompletions)
 
   app.run()

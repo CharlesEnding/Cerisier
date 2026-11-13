@@ -7,12 +7,7 @@
 ## the tool's permission is `auto`, or a per-conversation "always allow"
 ## override has been set from the chat UI).
 ##
-## WHERE a call runs is decided once, when the call is requested, from the
-## conversation's "Run tools on" setting (default / server / client) and the
-## tool's manifest `location` (see `resolveTarget` in common/types.nim). The
-## decision is stored in `tool_calls.location` ("server" | "client"):
-##   * server: spawned by this process via osproc (runner_local)
-##   * client: sent over WebSocket to a connected cerisier-agent (runner_remote)
+## Every tool runs on this machine, spawned via osproc (runner_local).
 ##
 ## `execute()` is async so a running tool call can be interrupted by a manual
 ## "kill" request from chat: the wait loops yield via `sleepAsync` between
@@ -23,19 +18,17 @@ import ../db/database
 import ../../common/types
 import ./registry
 import ./runner_local
-import ./runner_remote
 import ./schema
 
 type
   ToolExecutor* = ref object
     db: Database
     registry*: ToolRegistry
-    companions: CompanionRegistry
     runningProcesses: Table[int64, Process]
     killRequested: Table[int64, bool]
     sessionPermissions: Table[int64, Table[string, ToolPermission]] ## convId -> toolName -> override
 
-  ApprovalHook* = proc(toolCallId: int64, toolName, argsJson, target: string): Future[void] {.gcsafe.}
+  ApprovalHook* = proc(toolCallId: int64, toolName, argsJson: string): Future[void] {.gcsafe.}
     ## Shows an approve/deny prompt for a `pending_approval` call and returns
     ## once the user has decided *and* (if approved) the call has finished.
 
@@ -44,8 +37,8 @@ type
     status*: string
     resultJson*: string
 
-proc newToolExecutor*(db: Database, registry: ToolRegistry, companions: CompanionRegistry): ToolExecutor =
-  ToolExecutor(db: db, registry: registry, companions: companions,
+proc newToolExecutor*(db: Database, registry: ToolRegistry): ToolExecutor =
+  ToolExecutor(db: db, registry: registry,
     runningProcesses: initTable[int64, Process](),
     killRequested: initTable[int64, bool](),
     sessionPermissions: initTable[int64, Table[string, ToolPermission]]())
@@ -70,18 +63,6 @@ proc setSessionPermission*(ex: ToolExecutor, convId: int64, toolName: string, pe
     ex.sessionPermissions[convId] = initTable[string, ToolPermission]()
   ex.sessionPermissions[convId][toolName] = permission
 
-proc conversationTargetPref(ex: ToolExecutor, convId: int64): ToolTargetPref =
-  try:
-    parseEnum[ToolTargetPref](ex.db.getConversationToolTarget(convId))
-  except ValueError:
-    ttpDefault
-
-proc targetFromRecorded(recorded: string, manifest: ToolManifest): ExecTarget =
-  case recorded
-  of "server": etServer
-  of "client": etClient
-  else: manifestTarget(manifest.location) ## rows written before the chat option existed ("local"/"remote")
-
 proc requestToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, argsJson: string): int64 =
   ## Always creates a tool_calls row. Resolves the effective permission
   ## (session override, else the manifest's own) and, for `auto`/`deny`,
@@ -92,12 +73,11 @@ proc requestToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, args
   try:
     manifest = ex.registry.find(toolName)
   except KeyError:
-    let id = ex.db.createToolCall(messageId, toolName, $etServer, argsJson)
+    let id = ex.db.createToolCall(messageId, toolName, argsJson)
     ex.db.setToolCallResult(id, $tcsFailed, failure("unknown tool: " & toolName))
     return id
 
-  let target = resolveTarget(ex.conversationTargetPref(convId), manifest.location)
-  let id = ex.db.createToolCall(messageId, toolName, $target, argsJson)
+  let id = ex.db.createToolCall(messageId, toolName, argsJson)
   case ex.effectivePermission(convId, toolName, manifest)
   of ptDeny:
     ex.db.setToolCallResult(id, $tcsDenied, failure("tool is disabled (permission=deny)"))
@@ -124,7 +104,7 @@ proc killToolCall*(ex: ToolExecutor, toolCallId: int64) =
   ex.killRequested[toolCallId] = true
 
 proc finishWithOutput(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifest, output: string) =
-  ## Shared by server and client execution: the tool printed one JSON object
+  ## The tool printed one JSON object
   ## `{"ok": bool, "data": ..., "error": ...}`; validate it and record it.
   var resultNode: JsonNode
   try:
@@ -155,7 +135,7 @@ proc finishWithOutput(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifes
 
   ex.db.setToolCallResult(toolCallId, $tcsSucceeded, $(%*{"ok": true, "data": dataNode}))
 
-proc executeOnServer(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifest, argsJson: string) {.async.} =
+proc executeLocally(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifest, argsJson: string) {.async.} =
   ex.db.setToolCallStatus(toolCallId, $tcsRunning)
   let p = startLocal(manifest, argsJson)
   ex.runningProcesses[toolCallId] = p
@@ -188,61 +168,6 @@ proc executeOnServer(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifest
     return
   finishWithOutput(ex, toolCallId, manifest, output)
 
-proc executeOnClient(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifest, argsJson: string) {.async.} =
-  ## Sends the job to a connected cerisier-agent that advertises this tool
-  ## name and polls for its reply (the /ws/agent route files results into the
-  ## CompanionRegistry). The agent enforces the tool's own timeout; the server
-  ## allows a small grace period on top before giving up.
-  let companion = ex.companions.findCompanionFor(manifest.name)
-  if companion.isNone:
-    ex.db.setToolCallResult(toolCallId, $tcsFailed, failure(
-      "no connected client agent provides the tool '" & manifest.name &
-      "'. Start cerisier-agent on the client machine (with this tool in its tools directory), " &
-      "or set \"Run tools on\" to Server."))
-    return
-  let cid = companion.get()
-  let job = makeJob(manifest.name, argsJson)
-  ex.db.setToolCallStatus(toolCallId, $tcsRunning)
-  try:
-    await ex.companions.sendTo(cid, job.toWire())
-  except CatchableError as e:
-    ex.db.setToolCallResult(toolCallId, $tcsFailed, failure("could not send the job to the client agent: " & e.msg))
-    return
-
-  var waited = 0
-  const stepMs = 50
-  var killed = false
-  var timedOut = false
-  var reply = none(RemoteJobResult)
-  while true:
-    reply = ex.companions.takeResult(job.id)
-    if reply.isSome:
-      break
-    if not ex.companions.companions.hasKey(cid):
-      break ## agent disconnected mid-job
-    if ex.killRequested.getOrDefault(toolCallId, false):
-      killed = true
-    elif waited >= manifest.timeoutMs + 3000:
-      timedOut = true
-    if killed or timedOut:
-      try:
-        await ex.companions.sendTo(cid, $(%*{"type": "kill_tool", "id": job.id}))
-      except CatchableError:
-        discard
-      break
-    await sleepAsync(stepMs)
-    waited += stepMs
-
-  ex.killRequested.del(toolCallId)
-  if killed:
-    ex.db.setToolCallResult(toolCallId, $tcsKilled, failure("killed by user"))
-  elif timedOut:
-    ex.db.setToolCallResult(toolCallId, $tcsTimeout, failure("timed out after " & $manifest.timeoutMs & "ms"))
-  elif reply.isNone:
-    ex.db.setToolCallResult(toolCallId, $tcsFailed, failure("the client agent disconnected before returning a result"))
-  else:
-    finishWithOutput(ex, toolCallId, manifest, reply.get().output)
-
 proc execute*(ex: ToolExecutor, toolCallId: int64, toolName, argsJson: string) {.async.} =
   ## Runs an already-approved tool call and records the result. Re-validates
   ## input against the schema (defense in depth: args could have been
@@ -260,11 +185,7 @@ proc execute*(ex: ToolExecutor, toolCallId: int64, toolName, argsJson: string) {
     ex.db.setToolCallResult(toolCallId, $tcsValidationFailed, failure(schemaErrorsMsg(inputErrors)))
     return
 
-  case targetFromRecorded(ex.db.getToolCallLocation(toolCallId), manifest)
-  of etServer:
-    await ex.executeOnServer(toolCallId, manifest, argsJson)
-  of etClient:
-    await ex.executeOnClient(toolCallId, manifest, argsJson)
+  await ex.executeLocally(toolCallId, manifest, argsJson)
 
 proc dispatchToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, argsJson: string,
                        askUser: ApprovalHook): Future[DispatchResult] {.async.} =
@@ -277,7 +198,7 @@ proc dispatchToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, arg
   let id = ex.requestToolCall(convId, messageId, toolName, argsJson)
   var row = ex.db.getToolCall(id)
   if row.status == $tcsPendingApproval:
-    await askUser(id, toolName, argsJson, ex.db.getToolCallLocation(id))
+    await askUser(id, toolName, argsJson)
     row = ex.db.getToolCall(id)
   elif row.status == $tcsApproved:
     await ex.execute(id, toolName, argsJson)

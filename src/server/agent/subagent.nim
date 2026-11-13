@@ -1,7 +1,7 @@
-## Sub-agents: offload a self-contained task to a fresh, bounded llama session
+## Sub-agents: offload a self-contained task to a fresh, bounded chat session
 ## so the main conversation's context isn't eaten by the work.
 ##
-## A sub-agent has its own LlamaSession (child of the assistant message that
+## A sub-agent has its own ChatSession (child of the assistant message that
 ## called `spawn_subagent`), starts with an empty context containing only its
 ## task, may use tools (same permission/approval model as the main agent; no
 ## recursion, no todo list), and returns ONE final report to the parent.
@@ -15,15 +15,17 @@
 ## rest of the WebSocket traffic; approvals use `hooks.askApproval`.
 
 import std/[json, options, strutils, asyncdispatch]
+import ../config
 import ../db/database
-import ../llama/router_client
-import ../llama/session
+import ../api/client
+import ../api/session
 import ../tools/registry
 import ../tools/executor
 import ../tools/builtin
 import ../tools/toolcalls
 import ../log
 import ../../common/types
+import ./hooks
 import ./prompt
 
 const
@@ -31,22 +33,16 @@ const
 You were started by a parent assistant to do one task, and you only know what is in the task below. Do the task, using tools if you need them), then reply with a concise final report containing only what the parent needs: findings, names of any files you wrote, and caveats. Do not ask questions; make reasonable assumptions and state them. Your reply without a tool call is your final report."""
 
 type
-  SubAgentHooks* = ref object
-    emit*: proc(ev: JsonNode) {.gcsafe.}
-    askApproval*: ApprovalHook
-    isCancelled*: proc(): bool {.gcsafe.}
-
   SubAgentEnv* = ref object
     db*: Database
-    router*: RouterClient
+    api*: ApiClient
     registry*: ToolRegistry
     executor*: ToolExecutor
     dataDir*: string
     convId*: int64
     parentMessageId*: int64   ## assistant message that issued spawn_subagent
-    model*: string
-    ctxSize*: int
-    hooks*: SubAgentHooks
+    model*: ModelEntry
+    hooks*: AgentHooks
 
   SubAgentResult* = object
     ok*: bool
@@ -61,9 +57,9 @@ proc runSubAgent*(env: SubAgentEnv, task, context: string, allow: seq[string]): 
     fullTask.add("\n\nContext:\n" & context.strip())
 
   let rootId = db.addMessage(env.convId, some(env.parentMessageId), "user", fullTask)
-  let sess = newLlamaSession(db, env.router, env.convId, some(rootId), env.model, "subagent", env.ctxSize)
+  let sess = newChatSession(db, env.api, env.convId, some(rootId), env.model, "subagent")
   discard db.addTurn(sess.id, "user", fullTask)
-  logInfo("subagent", "started (task " & $fullTask.len & " chars, model " & env.model & ")")
+  logInfo("subagent", "started (task " & $fullTask.len & " chars, model " & env.model.name & ")")
   env.hooks.emit(%*{"type": "subagent_start", "id": rootId, "task": fullTask})
 
   let systemPrompt = buildSystemPrompt(db, env.registry, env.convId, forSubAgent = true, allow = allow) &
@@ -125,7 +121,7 @@ proc runSubAgent*(env: SubAgentEnv, task, context: string, allow: seq[string]): 
                                           messageId: assistantMsgId), call.name, call.argsJson)
             resultJson = r.resultJson
             let status = if r.ok: $tcsSucceeded else: $tcsFailed
-            let tcId = db.createToolCall(assistantMsgId, call.name, $etServer, call.argsJson)
+            let tcId = db.createToolCall(assistantMsgId, call.name, call.argsJson)
             db.setToolCallResult(tcId, status, resultJson)
             for ev in r.events:
               env.hooks.emit(ev)

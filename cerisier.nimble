@@ -1,9 +1,9 @@
 version       = "0.1.0"
 author        = "Christian"
-description   = "Extensible agent orchestrator for a local llama.cpp server"
+description   = "Extensible agent harness for OpenAI-compatible model backends"
 license       = "MIT"
 srcDir        = "src"
-bin           = @["server/cerisier_server", "agentcli/cerisier_agent"]
+bin           = @["server/cerisier_server"]
 binDir        = "bin"
 
 requires "nim >= 2.0.0"

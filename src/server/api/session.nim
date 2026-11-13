@@ -1,13 +1,10 @@
-## A bounded conversation against the router's /v1/chat/completions for one
+## A bounded conversation against the backend's /v1/chat/completions for one
 ## model. Tracks token usage and decides when the context is close to full,
 ## triggering a pluggable "context strategy" (v1: summarize-and-continue).
-##
-## No live router is required to compile or reason about this module: the
-## actual HTTP call is isolated in `sendTurn`, which callers may choose not
-## to invoke (e.g. when there's no router running, as on this dev machine).
 
 import std/[json, options, asyncdispatch]
-import ./router_client
+import ./client
+import ../config
 import ../db/database
 
 type
@@ -19,10 +16,11 @@ type
     ssClosed = "closed"
     ssSummarizing = "summarizing"
 
-  LlamaSession* = ref object
+  ChatSession* = ref object
     id*: int64
     db: Database
-    router: RouterClient
+    api: ApiClient
+    entry*: ModelEntry
     model*: string
     ctxSize*: int
     promptTokens*: int
@@ -30,22 +28,22 @@ type
     status*: SessionStatus
     strategy*: ContextStrategy
 
-proc newLlamaSession*(db: Database, router: RouterClient, conversationId: int64,
-                       parentMessageId: Option[int64], model: string, purpose: string,
-                       ctxSize: int, strategy = csSummarizeAndContinue): LlamaSession =
-  let id = db.createLlamaSession(conversationId, parentMessageId, model, purpose, ctxSize)
-  LlamaSession(id: id, db: db, router: router, model: model, ctxSize: ctxSize,
+proc newChatSession*(db: Database, api: ApiClient, conversationId: int64,
+                       parentMessageId: Option[int64], entry: ModelEntry, purpose: string,
+                       strategy = csSummarizeAndContinue): ChatSession =
+  let id = db.createLlamaSession(conversationId, parentMessageId, entry.name, purpose, entry.maxTokens)
+  ChatSession(id: id, db: db, api: api, entry: entry, model: entry.name, ctxSize: entry.maxTokens,
                promptTokens: 0, completionTokens: 0, status: ssOpen, strategy: strategy)
 
 const contextSafetyMargin = 0.9 ## trigger strategy at 90% of ctxSize
 
-proc isNearContextLimit*(session: LlamaSession): bool =
+proc isNearContextLimit*(session: ChatSession): bool =
   if session.ctxSize <= 0:
     return false
   let total = session.promptTokens + session.completionTokens
   total.float >= session.ctxSize.float * contextSafetyMargin
 
-proc recordUsage*(session: LlamaSession, promptTokens, completionTokens: int) =
+proc recordUsage*(session: ChatSession, promptTokens, completionTokens: int) =
   session.promptTokens = promptTokens
   session.completionTokens = completionTokens
   session.db.updateSessionTokens(session.id, promptTokens, completionTokens)
@@ -53,8 +51,7 @@ proc recordUsage*(session: LlamaSession, promptTokens, completionTokens: int) =
 type
   ChatMsg* = object
     ## One chat-completions message. `images` holds `data:` URIs; when present
-    ## the message is sent as OpenAI-style content parts (text + image_url),
-    ## which llama-server accepts for models loaded with a vision projector.
+    ## the message is sent as OpenAI-style content parts (text + image_url).
     role*: string
     content*: string
     images*: seq[string]
@@ -67,7 +64,7 @@ proc toChatMsgs*(messages: seq[(string, string)]): seq[ChatMsg] =
   for (role, content) in messages:
     result.add(chatMsg(role, content))
 
-proc buildChatRequest(model: string, messages: seq[ChatMsg], stream: bool): JsonNode =
+proc buildChatRequest(entry: ModelEntry, messages: seq[ChatMsg], stream: bool): JsonNode =
   var msgs = newJArray()
   for m in messages:
     if m.images.len == 0:
@@ -78,14 +75,20 @@ proc buildChatRequest(model: string, messages: seq[ChatMsg], stream: bool): Json
       for img in m.images:
         parts.add(%*{"type": "image_url", "image_url": {"url": img}})
       msgs.add(%*{"role": m.role, "content": parts})
-  %*{"model": model, "messages": msgs, "stream": stream}
+  result = %*{"model": entry.name, "messages": msgs, "stream": stream}
+  if stream:
+    result["stream_options"] = %*{"include_usage": true}
+  if entry.maxOutputTokens > 0:
+    result["max_tokens"] = %entry.maxOutputTokens
+  if entry.reasoningEffort.len > 0:
+    result["reasoning_effort"] = %entry.reasoningEffort
 
-proc sendTurn*(session: LlamaSession, messages: seq[ChatMsg]): Future[string] {.async.} =
-  ## Sends a full-history chat turn to the router and returns the assistant
+proc sendTurn*(session: ChatSession, messages: seq[ChatMsg]): Future[string] {.async.} =
+  ## Sends a full-history chat turn to the backend and returns the assistant
   ## text. Records token usage from the `usage` field. Raises on transport
-  ## error — callers should catch when no router is reachable.
-  let body = buildChatRequest(session.model, messages, stream = false)
-  let resp = await session.router.postJson("/v1/chat/completions", body)
+  ## error — callers should catch when the backend is unreachable.
+  let body = buildChatRequest(session.entry, messages, stream = false)
+  let resp = await session.api.postJson("/chat/completions", body)
   let usage = resp{"usage"}
   if usage != nil:
     session.recordUsage(usage{"prompt_tokens"}.getInt(session.promptTokens),
@@ -97,7 +100,7 @@ proc sendTurn*(session: LlamaSession, messages: seq[ChatMsg]): Future[string] {.
   else:
     result = ""
 
-proc sendTurn*(session: LlamaSession, messages: seq[(string, string)]): Future[string] {.async.} =
+proc sendTurn*(session: ChatSession, messages: seq[(string, string)]): Future[string] {.async.} =
   ## Convenience overload for plain (role, content) histories.
   result = await session.sendTurn(toChatMsgs(messages))
 
@@ -105,9 +108,9 @@ type
   StreamingReply* = object
     content*: string
     reasoning*: string
-    error*: string ## set when the router reported/caused a failure; content may still be partial
+    error*: string ## set when the backend reported/caused a failure; content may still be partial
 
-proc sendTurnStreaming*(session: LlamaSession, messages: seq[ChatMsg],
+proc sendTurnStreaming*(session: ChatSession, messages: seq[ChatMsg],
                          onToken: proc(tok: string): Future[void] {.gcsafe.},
                          onReasoning: proc(tok: string): Future[void] {.gcsafe.},
                          isCancelled: proc(): bool {.gcsafe.}): Future[StreamingReply] {.async, gcsafe.} =
@@ -118,10 +121,10 @@ proc sendTurnStreaming*(session: LlamaSession, messages: seq[ChatMsg],
   ## was accumulated so far (full or partial, if cancelled) is recorded as
   ## the turn and returned. On transport failure `result.error` is set
   ## instead of raising, so callers can report it to the user.
-  let body = buildChatRequest(session.model, messages, stream = true)
+  let body = buildChatRequest(session.entry, messages, stream = true)
   var resp: JsonNode
   try:
-    resp = await session.router.postJsonStream("/v1/chat/completions", body, onToken, onReasoning, isCancelled)
+    resp = await session.api.postJsonStream("/chat/completions", body, onToken, onReasoning, isCancelled)
   except CatchableError as e:
     result.error = e.msg
     return
@@ -141,9 +144,9 @@ proc summarizePrompt(): string =
   "decisions needed to continue the task. This summary will seed a fresh " &
   "context window."
 
-proc summarizeAndContinue*(session: LlamaSession, history: seq[(string, string)]): Future[string] {.async.} =
+proc summarizeAndContinue*(session: ChatSession, history: seq[(string, string)]): Future[string] {.async.} =
   ## Asks the model to summarize `history`, closes this session, and returns
-  ## the summary text so the caller can open a fresh LlamaSession seeded
+  ## the summary text so the caller can open a fresh ChatSession seeded
   ## with it.
   var req = history
   req.add(("user", summarizePrompt()))

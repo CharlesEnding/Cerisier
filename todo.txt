@@ -1,6 +1,6 @@
 1. Add context used so far.
 2. Add a system prompt page with editable prompt.
-3. Agents and subagents should have a common dedicated folder somewhere per chat. Writing in this folder shouldn't require approval. 
+3. Writing files to /tmp shouldn't require approval, and agents and subagents should write any files they need to write over there.
 4. "Ask for help tool call that takes in an answer."
 5. Fix loops
 6. Choose thinking effort in chat combobox

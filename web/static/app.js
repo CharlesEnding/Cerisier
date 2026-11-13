@@ -207,8 +207,7 @@ function connectChat(conversationId) {
     const details = el('details', 'tool-call pending');
     details.open = true;
     details.dataset.toolCallId = data.id;
-    const where = data.target ? ` — runs on ${data.target}` : '';
-    details.appendChild(el('summary', '', `Tool call: ${data.name}${where}`));
+    details.appendChild(el('summary', '', `Tool call: ${data.name}`));
     details.appendChild(el('pre', '', data.args));
     const btns = el('div', 'tool-call-actions');
     const mkBtn = (label, msgType, always) => {
@@ -473,31 +472,10 @@ function connectChat(conversationId) {
     });
   });
 
-  // ---- tool location selector (todo #6) -----------------------------------
-  const targetSelect = document.getElementById('tool-target-select');
-  if (targetSelect) {
-    let prev = targetSelect.value;
-    targetSelect.addEventListener('change', () => {
-      const requested = targetSelect.value;
-      fetch(`/chat/${conversationId}/tool-target`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: requested }),
-      })
-        .then((r) => r.json())
-        .then((d) => {
-          if (d.success) { prev = requested; return; }
-          targetSelect.value = prev;
-          note('Could not change tool location: ' + (d.error || 'unknown error'));
-        })
-        .catch((err) => { targetSelect.value = prev; note('Could not change tool location: ' + err); });
-    });
-  }
-
   // ---- model switching ----------------------------------------------------
   const modelSelect = document.getElementById('model-select');
   if (modelSelect) {
-    const previousValue = modelSelect.value;
+    let previousValue = modelSelect.value;
     const fail = (msg) => {
       modelSelect.disabled = false;
       modelSelect.value = previousValue;
@@ -515,9 +493,8 @@ function connectChat(conversationId) {
         .then((r) => r.json())
         .then((data) => {
           if (!data.success) { fail(`Failed to switch model: ${data.error || 'unknown error'}`); return; }
-          // Accepted doesn't mean loaded — a too-big model can crash the
-          // router seconds later. Poll until it's loaded or the router fails.
-          pollChatModelOutcome(requested, previousValue, modelSelect, log);
+          previousValue = requested;
+          modelSelect.disabled = false;
         })
         .catch((err) => fail(`Failed to switch model: ${err}`));
     });
@@ -525,49 +502,13 @@ function connectChat(conversationId) {
 }
 
 // ---------------------------------------------------------------- models page
-// The router's /models/load response only means "request accepted" — with a
-// model too big for VRAM it can accept and then crash seconds later. A
-// successful POST therefore starts a poll loop instead of declaring victory.
+// Load/unload only exist when the server runs with model_management=true. A
+// successful POST means "request accepted", so poll until the status changes.
 const MODEL_POLL_INTERVAL_MS = 1000;
-
-function pollChatModelOutcome(model, previousValue, modelSelect, log) {
-  const tick = () => {
-    Promise.all([
-      fetch('/router/status.json').then((r) => r.json()).catch(() => null),
-      fetch('/models/status.json').then((r) => r.json()).catch(() => null),
-    ]).then(([routerStatus, modelsStatus]) => {
-      if (routerStatus && (routerStatus.state === 'crashed' || routerStatus.state === 'stopped')) {
-        modelSelect.disabled = false;
-        modelSelect.value = previousValue;
-        const reason = routerStatus.lastCrashReason || routerStatus.state;
-        log.appendChild(el('div', 'msg error', `Failed to switch model: router ${routerStatus.state} (${reason}) — see Router page`));
-        log.scrollTop = log.scrollHeight;
-        return;
-      }
-      if (modelsStatus && modelsStatus.success) {
-        const entry = modelsStatus.models.find((m) => m.id === model);
-        if (entry && entry.status === 'loaded') { modelSelect.disabled = false; return; }
-      }
-      setTimeout(tick, MODEL_POLL_INTERVAL_MS);
-    });
-  };
-  setTimeout(tick, MODEL_POLL_INTERVAL_MS);
-}
 
 function pollModelOutcome(model, isLoad, msgSpan, btn) {
   const tick = () => {
-    Promise.all([
-      fetch('/router/status.json').then((r) => r.json()).catch(() => null),
-      fetch('/models/status.json').then((r) => r.json()).catch(() => null),
-    ]).then(([routerStatus, modelsStatus]) => {
-      if (routerStatus && (routerStatus.state === 'crashed' || routerStatus.state === 'stopped')) {
-        btn.disabled = false;
-        if (msgSpan) {
-          const reason = routerStatus.lastCrashReason || routerStatus.state;
-          msgSpan.textContent = `error: router ${routerStatus.state} (${reason}) — see Router page`;
-        }
-        return;
-      }
+    fetch('/models/status.json').then((r) => r.json()).catch(() => null).then((modelsStatus) => {
       if (modelsStatus && modelsStatus.success) {
         const entry = modelsStatus.models.find((m) => m.id === model);
         const status = entry ? entry.status : null;

@@ -1,0 +1,10 @@
+[
+  {
+    "name": "edge0_145b",
+    "display_name": "Edge0 145B",
+    "max_tokens": 262144,
+    "max_output_tokens": 32768,
+    "reasoning_effort": "low",
+    "capabilities": { "tools": true, "images": false }
+  }
+]

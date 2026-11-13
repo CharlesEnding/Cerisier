@@ -1,0 +1,18 @@
+# Copy to config/cerisier.conf. Every key is optional.
+host = 127.0.0.1
+port = 8888
+
+# OpenAI-compatible backend, including the /v1 prefix (http only).
+api_url = http://192.168.1.6:8000/v1
+# The key comes from $CERISIER_API_KEY, else the first line of this file.
+# api_key_file = /home/you/.config/cerisier/api_key
+
+# Bearer token clients of Cerisier's own /v1 API must send ($CERISIER_SERVER_TOKEN
+# or this file). Unset = open (fine while bound to 127.0.0.1).
+# server_token_file = /home/you/.config/cerisier/server_token
+
+# Models Cerisier may use; same shape as Zed's available_models.
+# models_file = config/models.json
+
+# Enables load/unload buttons; needs a backend that implements /models/load|unload.
+# model_management = false
