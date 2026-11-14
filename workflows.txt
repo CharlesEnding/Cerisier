@@ -17,3 +17,31 @@ Title: Transcribe administrative documents
 ---
 Read each image in a folder and transcribe each into its own text file.
 ---------------------------
+
+
+---------------------------
+Title: Literature review
+---
+Fetch papers on topic. Fetch cited papers from other papers.
+Refining the topic.
+Writing.
+---------------------------
+
+---------------------------
+Title: Requirement writer
+---
+Knows the ISO norms.
+Fetch projects on github.
+List features & decompose into requirements.
+List non-functional requirements.
+Take screenshots.
+---------------------------
+
+
+---------------------------
+Title: Procedural blender generation
+---
+Look at reference.
+Generate JSON for furniture addon.
+Render result.
+---------------------------

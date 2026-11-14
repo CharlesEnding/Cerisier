@@ -1,0 +1,66 @@
+{
+  "name": "crop_image",
+  "description": "Crop a rectangular region out of an image. Writes to a new output file.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/crop_image.py",
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "input_path",
+      "output_path",
+      "x",
+      "y",
+      "width",
+      "height"
+    ],
+    "properties": {
+      "input_path": {
+        "type": "string"
+      },
+      "output_path": {
+        "type": "string"
+      },
+      "x": {
+        "type": "integer",
+        "description": "Top-left x of the crop box (pixels)."
+      },
+      "y": {
+        "type": "integer",
+        "description": "Top-left y of the crop box (pixels)."
+      },
+      "width": {
+        "type": "integer"
+      },
+      "height": {
+        "type": "integer"
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "output_path",
+      "width",
+      "height"
+    ],
+    "properties": {
+      "output_path": {
+        "type": "string"
+      },
+      "width": {
+        "type": "integer"
+      },
+      "height": {
+        "type": "integer"
+      },
+      "box": {
+        "type": "array",
+        "items": {
+          "type": "integer"
+        }
+      }
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "ask"
+}

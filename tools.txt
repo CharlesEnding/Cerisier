@@ -1,0 +1,30 @@
+* Read webpage
+* Web search
+* Github search
+* Steam search
+* PDF tools
+    * To text
+    * Merge
+    * Split
+    * Extract pages
+    * Extract images
+* FFMPEg Wrapper for common operations
+    * Extract frames
+    * Compile frames into video
+    * Extract audio
+* Database interface (is that just SQL?)
+* Form generator (PDF)
+
+* Date & time
+* User context (who is he, where does he live, what does he want, ...)
+* Screenshot
+* File search (structured grep/find) 
+* File tree
+* Image tools
+    * Rotate
+    * Crop
+    * OCR
+    * Convert
+    * Resize
+* Image generation
+* Fetch emails

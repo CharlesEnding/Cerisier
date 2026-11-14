@@ -1,0 +1,54 @@
+{
+  "name": "convert_image",
+  "description": "Convert an image between formats (PNG, JPEG, WEBP, BMP, TIFF, GIF). Writes to a new output file.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/convert_image.py",
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "input_path",
+      "output_path"
+    ],
+    "properties": {
+      "input_path": {
+        "type": "string"
+      },
+      "output_path": {
+        "type": "string"
+      },
+      "format": {
+        "type": "string",
+        "description": "Target format (e.g. PNG, JPEG). Inferred from output extension if omitted."
+      },
+      "quality": {
+        "type": "integer",
+        "description": "JPEG/WEBP quality 1-100 (default 95)."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "output_path",
+      "format",
+      "width",
+      "height"
+    ],
+    "properties": {
+      "output_path": {
+        "type": "string"
+      },
+      "format": {
+        "type": "string"
+      },
+      "width": {
+        "type": "integer"
+      },
+      "height": {
+        "type": "integer"
+      }
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "ask"
+}

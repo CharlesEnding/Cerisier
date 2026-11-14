@@ -1,0 +1,49 @@
+{
+  "name": "rotate_image",
+  "description": "Rotate an image clockwise by a given angle in degrees. Writes to a new output file.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/rotate_image.py",
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "input_path",
+      "output_path"
+    ],
+    "properties": {
+      "input_path": {
+        "type": "string"
+      },
+      "output_path": {
+        "type": "string"
+      },
+      "angle": {
+        "type": "number",
+        "description": "Clockwise rotation in degrees (default 0)."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "output_path",
+      "width",
+      "height"
+    ],
+    "properties": {
+      "output_path": {
+        "type": "string"
+      },
+      "width": {
+        "type": "integer"
+      },
+      "height": {
+        "type": "integer"
+      },
+      "angle": {
+        "type": "number"
+      }
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "ask"
+}

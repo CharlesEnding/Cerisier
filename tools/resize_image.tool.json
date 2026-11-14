@@ -1,0 +1,52 @@
+{
+  "name": "resize_image",
+  "description": "Resize an image (by width and/or height, optionally preserving aspect ratio). Writes to a new output file.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/resize_image.py",
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "input_path",
+      "output_path"
+    ],
+    "properties": {
+      "input_path": {
+        "type": "string"
+      },
+      "output_path": {
+        "type": "string"
+      },
+      "width": {
+        "type": "integer"
+      },
+      "height": {
+        "type": "integer"
+      },
+      "keep_aspect": {
+        "type": "boolean",
+        "description": "Preserve aspect ratio (default true)."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "output_path",
+      "width",
+      "height"
+    ],
+    "properties": {
+      "output_path": {
+        "type": "string"
+      },
+      "width": {
+        "type": "integer"
+      },
+      "height": {
+        "type": "integer"
+      }
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "ask"
+}
