@@ -1,5 +1,4 @@
 -1. Make LLM batch the commands if they're not sequentially related (output of one needed for the other)
-0. Tool system improvement
 2. Add a system prompt page with editable prompt.
 4. "Ask for help tool call that takes in an answer."
 5. Fix loops
@@ -9,7 +8,10 @@
 11. Mixed tool call -> Zed + Cerisier rather than alternatives. We need to be able to spawn subagent but also read and modify files using Zed's tools.
 12. Have subagent calls be titled after what they do. A single line that's expandable. Maybe cerisier only.
 13. Different subagent types with different permissions and launch permissions:
-    thinking agent with no command -> automatic launch
+    thinking agent with no command -> automatic launch, subagent launch should take a reasoning effort
 14. Command summary. A command tool call should explain what it does and whether it's safe.
-16. Sparsity of tool calls and steps before doing the work.
 17. Replace tool call should have a diff maybe, better formatting or something
+
+* Fix bing search (adversarial garbage data return, choose another provider)
+Priority:
+    16. Sparsity of steps before doing the work & reasoning commensurate to the task.
