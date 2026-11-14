@@ -98,6 +98,9 @@ button { cursor: pointer; }
 #chat-header { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 #chat-header h1 { margin-right: auto; font-size: 1.4rem; }
 #chat-header label { color: var(--muted); font-size: 0.85rem; }
+#ctx-meter { font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+#ctx-meter.warn { color: #ffdca3; }
+#ctx-meter.crit { color: #ffb3b3; font-weight: 600; }
 #agent-status { font-size: 0.8rem; color: var(--muted); }
 #agent-status.ok { color: #7ee787; }
 

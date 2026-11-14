@@ -309,6 +309,7 @@ function connectChat(conversationId) {
         showToolResult(data);
         return;
       case 'todo_update': renderTodos(data.items); return;
+      case 'usage': renderCtxMeter(data.used, data.ctx); return;
       case 'title_updated': {
         const t = document.getElementById('chat-title');
         if (t) t.textContent = data.title;
@@ -472,6 +473,20 @@ function connectChat(conversationId) {
     });
   });
 
+  // ---- context meter ------------------------------------------------------
+  const ctxMeter = document.getElementById('ctx-meter');
+  function fmtTokens(n) { return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n); }
+  function renderCtxMeter(used, max) {
+    if (!ctxMeter) return;
+    ctxMeter.dataset.used = used;
+    ctxMeter.dataset.ctx = max;
+    const pct = max > 0 ? Math.round((used / max) * 100) : 0;
+    ctxMeter.textContent = max > 0 ? `Context: ${fmtTokens(used)} / ${fmtTokens(max)} (${pct}%)` : `Context: ${fmtTokens(used)}`;
+    ctxMeter.classList.toggle('warn', pct >= 75 && pct < 90);
+    ctxMeter.classList.toggle('crit', pct >= 90);
+  }
+  if (ctxMeter) renderCtxMeter(Number(ctxMeter.dataset.used) || 0, Number(ctxMeter.dataset.ctx) || 0);
+
   // ---- model switching ----------------------------------------------------
   const modelSelect = document.getElementById('model-select');
   if (modelSelect) {
@@ -495,8 +510,32 @@ function connectChat(conversationId) {
           if (!data.success) { fail(`Failed to switch model: ${data.error || 'unknown error'}`); return; }
           previousValue = requested;
           modelSelect.disabled = false;
+          renderCtxMeter(0, data.ctx || 0);
         })
         .catch((err) => fail(`Failed to switch model: ${err}`));
+    });
+  }
+
+  // ---- thinking effort ----------------------------------------------------
+  const effortSelect = document.getElementById('effort-select');
+  if (effortSelect) {
+    let previousEffort = effortSelect.value;
+    effortSelect.addEventListener('change', () => {
+      const requested = effortSelect.value;
+      fetch(`/chat/${conversationId}/effort`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ effort: requested }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data.success) throw new Error(data.error || 'unknown error');
+          previousEffort = requested;
+        })
+        .catch((err) => {
+          effortSelect.value = previousEffort;
+          note(`Failed to set effort: ${err.message || err}`);
+        });
     });
   }
 

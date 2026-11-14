@@ -23,6 +23,7 @@ type
     entry*: ModelEntry
     model*: string
     ctxSize*: int
+    effort*: string ## per-chat reasoning effort; "" falls back to the model entry's
     promptTokens*: int
     completionTokens*: int
     status*: SessionStatus
@@ -33,7 +34,7 @@ proc newChatSession*(db: Database, api: ApiClient, conversationId: int64,
                        strategy = csSummarizeAndContinue): ChatSession =
   let id = db.createLlamaSession(conversationId, parentMessageId, entry.name, purpose, entry.maxTokens)
   ChatSession(id: id, db: db, api: api, entry: entry, model: entry.name, ctxSize: entry.maxTokens,
-               promptTokens: 0, completionTokens: 0, status: ssOpen, strategy: strategy)
+               effort: db.getConversationEffort(conversationId), promptTokens: 0, completionTokens: 0, status: ssOpen, strategy: strategy)
 
 const contextSafetyMargin = 0.9 ## trigger strategy at 90% of ctxSize
 
@@ -64,7 +65,7 @@ proc toChatMsgs*(messages: seq[(string, string)]): seq[ChatMsg] =
   for (role, content) in messages:
     result.add(chatMsg(role, content))
 
-proc buildChatRequest(entry: ModelEntry, messages: seq[ChatMsg], stream: bool): JsonNode =
+proc buildChatRequest(entry: ModelEntry, effort: string, messages: seq[ChatMsg], stream: bool): JsonNode =
   var msgs = newJArray()
   for m in messages:
     if m.images.len == 0:
@@ -80,14 +81,15 @@ proc buildChatRequest(entry: ModelEntry, messages: seq[ChatMsg], stream: bool): 
     result["stream_options"] = %*{"include_usage": true}
   if entry.maxOutputTokens > 0:
     result["max_tokens"] = %entry.maxOutputTokens
-  if entry.reasoningEffort.len > 0:
-    result["reasoning_effort"] = %entry.reasoningEffort
+  let level = if effort.len > 0: effort else: entry.reasoningEffort
+  if level.len > 0:
+    result["reasoning_effort"] = %level
 
 proc sendTurn*(session: ChatSession, messages: seq[ChatMsg]): Future[string] {.async.} =
   ## Sends a full-history chat turn to the backend and returns the assistant
   ## text. Records token usage from the `usage` field. Raises on transport
   ## error — callers should catch when the backend is unreachable.
-  let body = buildChatRequest(session.entry, messages, stream = false)
+  let body = buildChatRequest(session.entry, session.effort, messages, stream = false)
   let resp = await session.api.postJson("/chat/completions", body)
   let usage = resp{"usage"}
   if usage != nil:
@@ -121,7 +123,7 @@ proc sendTurnStreaming*(session: ChatSession, messages: seq[ChatMsg],
   ## was accumulated so far (full or partial, if cancelled) is recorded as
   ## the turn and returned. On transport failure `result.error` is set
   ## instead of raising, so callers can report it to the user.
-  let body = buildChatRequest(session.entry, messages, stream = true)
+  let body = buildChatRequest(session.entry, session.effort, messages, stream = true)
   var resp: JsonNode
   try:
     resp = await session.api.postJsonStream("/chat/completions", body, onToken, onReasoning, isCancelled)

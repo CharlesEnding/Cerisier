@@ -122,6 +122,7 @@ proc runAgentTurn*(env: LoopEnv, convId: int64, sess: ChatSession,
       result = newFuture[void]("onReasoning")
       result.complete()
     let reply = await sess.sendTurnStreaming(history, onToken, onReasoning, hooks.isCancelled)
+    hooks.emit(%*{"type": "usage", "used": sess.promptTokens + sess.completionTokens, "ctx": sess.ctxSize})
 
     if reply.reasoning.len > 0:
       discard env.db.addMessage(convId, none(int64), "reasoning", reply.reasoning)

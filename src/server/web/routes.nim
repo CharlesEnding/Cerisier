@@ -97,6 +97,8 @@ proc findAvailableModel*(s: AppState, name: string): Future[ModelEntry] {.async.
 type
   MsgRow = (int64, string, string, string, string) ## (id, parent_id or "", role, content, created_at)
 
+const effortLevels = ["low", "medium", "high"] ## "" (model default) is always allowed
+
 proc fileChipHtml(f: FileRow): string =
   let url = "/files/" & $f.id
   if f.mime.startsWith("image/"):
@@ -236,18 +238,29 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
   let title = s.db.getConversationTitle(currentId)
   var currentModel = ""
   var modelOptions = ""
+  var ctxUsed = 0
+  var ctxMax = 0
   try:
     let models = await availableModels(s)
     if s.chatSessions.hasKey(currentId):
-      currentModel = s.chatSessions[currentId].model
+      let live = s.chatSessions[currentId]
+      currentModel = live.model
+      ctxUsed = live.promptTokens + live.completionTokens
     elif models.len > 0:
       currentModel = models[0].name
     for m in models:
+      if m.name == currentModel:
+        ctxMax = m.maxTokens
       let selected = if m.name == currentModel: " selected" else: ""
       modelOptions.add(&"<option value=\"{escapeAttr(m.name)}\"{selected}>{escapeHtml(m.displayName)}</option>")
   except CatchableError as e:
     logError("api", "listing models failed: " & e.msg)
   let banner = await backendStatusBanner(s)
+  let currentEffort = s.db.getConversationEffort(currentId)
+  var effortOptions = "<option value=\"\"" & (if currentEffort.len == 0: " selected" else: "") & ">default</option>"
+  for lvl in effortLevels:
+    let selected = if lvl == currentEffort: " selected" else: ""
+    effortOptions.add(&"<option value=\"{lvl}\"{selected}>{lvl}</option>")
 
   let todosJson = $todosToJson(s.db.listTodos(currentId))
   let wd = s.db.getConversationWorkingDir(currentId)
@@ -260,6 +273,9 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
     <h1 id="chat-title">{escapeHtml(title)}</h1>
     <label for="model-select">Model:</label>
     <select id="model-select">{modelOptions}</select>
+    <label for="effort-select">Effort:</label>
+    <select id="effort-select" title="Thinking effort sent to the model (default = the model's configured value)">{effortOptions}</select>
+    <span id="ctx-meter" data-used="{ctxUsed}" data-ctx="{ctxMax}" title="Tokens in context (last prompt + reply) / context window"></span>
     <label for="workdir-input" id="workdir-label">Working dir:</label>
     <input id="workdir-input" type="text" value="{escapeAttr(wd)}" size="24" spellcheck="false"
       placeholder="/absolute/path" title="Tools run with this as their working directory; the auto_workdir permission auto-approves file tools whose paths stay inside it.">
@@ -551,10 +567,23 @@ proc chatModelPost*(ctx: Context) {.async, gcsafe.} =
     let entry = await findAvailableModel(s, modelId)
     s.chatSessions[convId] = newChatSession(s.db, s.api, convId, none(int64), entry, "chat")
     logInfo("routes", "conversation " & $convId & " switched to model " & modelId)
-    resp jsonResponse(%*{"success": true})
+    resp jsonResponse(%*{"success": true, "ctx": entry.maxTokens})
   except CatchableError as e:
     logError("routes", "model switch failed: " & $e.name & ": " & e.msg)
     resp jsonResponse(%*{"success": false, "error": e.msg})
+
+proc chatEffortPost*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  let convId = parseBiggestInt(ctx.getPathParams("id")).int64
+  let effort = parseJson(ctx.request.body){"effort"}.getStr("")
+  if effort.len > 0 and effort notin effortLevels:
+    resp jsonResponse(%*{"success": false, "error": "effort must be one of: " & effortLevels.join(", ")}, Http400)
+    return
+  s.db.setConversationEffort(convId, effort)
+  if s.chatSessions.hasKey(convId):
+    s.chatSessions[convId].effort = effort
+  logInfo("routes", "conversation " & $convId & " effort set to '" & effort & "'")
+  resp jsonResponse(%*{"success": true})
 
 const titleGenThreshold = 3 ## generate a topic title once a conversation reaches this many messages
 

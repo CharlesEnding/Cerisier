@@ -42,6 +42,7 @@ when isMainModule:
   app.get("/chat/{id}", chatPageWithId)
   app.get("/conversations/new", newConversationGet)
   app.post("/chat/{id}/model", chatModelPost)
+  app.post("/chat/{id}/effort", chatEffortPost)
   app.post("/chat/{id}/todos/clear", todosClearPost)
   app.get("/chat/{id}/workdir", workdirGet)
   app.post("/chat/{id}/workdir", workdirPost)

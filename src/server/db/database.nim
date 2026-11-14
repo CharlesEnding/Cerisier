@@ -124,6 +124,7 @@ proc migrate*(db: Database) =
   ## Column added after the table already exists in older databases, so use
   ## the idempotent ALTER path rather than the CREATE TABLE above.
   db.ensureColumn("agent_conversations", "working_dir", "TEXT NOT NULL DEFAULT ''")
+  db.ensureColumn("agent_conversations", "reasoning_effort", "TEXT NOT NULL DEFAULT ''")
 
 # ---- conversations ----
 
@@ -154,6 +155,15 @@ proc getConversationWorkingDir*(db: Database, conversationId: int64): string =
 
 proc setConversationWorkingDir*(db: Database, conversationId: int64, workingDir: string) =
   db.conn.exec(sql"UPDATE agent_conversations SET working_dir = ? WHERE id = ?", workingDir, conversationId)
+
+proc getConversationEffort*(db: Database, conversationId: int64): string =
+  ## Thinking effort chosen for this conversation, or "" to use the model's default.
+  for row in db.conn.fastRows(sql"SELECT COALESCE(reasoning_effort, '') FROM agent_conversations WHERE id = ?", conversationId):
+    return row[0]
+  ""
+
+proc setConversationEffort*(db: Database, conversationId: int64, effort: string) =
+  db.conn.exec(sql"UPDATE agent_conversations SET reasoning_effort = ? WHERE id = ?", effort, conversationId)
 
 # ---- messages ----
 
