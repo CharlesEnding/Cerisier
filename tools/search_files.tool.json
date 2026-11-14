@@ -1,6 +1,6 @@
 {
   "name": "search_files",
-  "description": "Recursively search a path for a regex (or fixed string) and return matching lines as file:line text, or just the file list. Wraps grep; read-only.",
+  "description": "Recursively search a path for a regex (PCRE, so 'a|b' alternation and \\d, \\s work; set fixed=true for literals) and return matching lines as file:line text, or just the file list. Replaces shell searching, so never use run_command for it: `grep -rn 'pat' dir` -> pattern + path; `grep -i` -> ignore_case; `grep -F` -> fixed; `grep -l` -> files_with_matches; `grep -A/-B/-C N` -> context_after / context_before / context; `grep --include='*.py'` -> glob; `grep -n 'a\\|b'` -> pattern 'a|b' (plain '|', not '\\|'); `grep ... | head -N` -> max_matches; `find dir -name '*.nim'` -> files_with_matches=true, glob='*.nim', pattern='.'. To read the surrounding code of a hit, use read_local_file with start_line/end_line. Read-only.",
   "kind": "python",
   "entrypoint": "tools/scripts/search_files.py",
   "input_schema": {
@@ -43,7 +43,7 @@
       },
       "max_matches": {
         "type": "integer",
-        "description": "Cap on output lines returned (default 200)."
+        "description": "Cap on matching lines returned, context lines not counted (default 200)."
       },
       "files_with_matches": {
         "type": "boolean",

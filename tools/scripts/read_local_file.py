@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Tool: read_local_file. Args: {"path": "...", "offset": int, "length": int,
-"line_numbers": bool}. Reads a file (optionally a byte range) as-is, no
+"line_numbers": bool, "start_line": int, "end_line": int}. Reads a file (optionally a byte or line range) as-is, no
 sandboxing/path-traversal checks (the approval gate is the safety net). Reads
 in binary mode so `offset`/`length` are byte offsets."""
 import json
@@ -25,6 +25,24 @@ def main():
         line_numbers = bool(args.get("line_numbers", False))
     except (TypeError, ValueError) as e:
         print(json.dumps({"ok": False, "error": f"invalid numeric argument: {e}"}))
+        return
+
+    if args.get("start_line") or args.get("end_line"):
+        try:
+            start = max(int(args.get("start_line") or 1), 1)
+            end = int(args.get("end_line") or 0)
+            with open(path, "rb") as f:
+                all_lines = f.read(MAX_BYTES * 8).decode("utf-8", errors="replace").split("\n")
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": str(e)}))
+            return
+        end = len(all_lines) if end <= 0 else min(end, len(all_lines))
+        picked = all_lines[start - 1:end]
+        if line_numbers:
+            picked = [f"{start + i}: {ln}" for i, ln in enumerate(picked)]
+        content = "\n".join(picked)
+        truncated = len(content) > MAX_BYTES
+        print(json.dumps({"ok": True, "data": {"content": content[:MAX_BYTES], "truncated": truncated}}))
         return
 
     try:

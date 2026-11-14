@@ -13,21 +13,13 @@
     thinking agent with no command -> automatic launch
 14. Command summary. A command tool call should explain what it does and whether it's safe.
 15. Add conversation delete button with confirmation in history page
+16. Sparsity of tool calls and steps before doing the work.
+
 Easy:
 * Add important installed programs & versions to system prompt as well as computer info (ubuntu version, RAM, etc...)
     Example of commands that should have been this tool:
       {"command":"which convert magick ffmpeg identify imagemagick 2>/dev/null; dpkg -l 2>/dev/null | grep -i imagemagick; }
 * Add flashing favicon when user approval is pending
-* Fix search file tool which seems to be ineffective
-  ```
-  Tool call: search_files (succeeded)
-
-  {"pattern":":hover|results-list|target","path":"/persistent/Cerisier/web/static/style.css","max_matches":30}
-
-  {"ok":true,"data":{"pattern":":hover|results-list|target","path":"/persistent/Cerisier/web/static/style.css","matches":"","count":0,"truncated":false}}
-  ```
-  This fails but should succeed. It should wrap sed, find, cat, grep with an intuitive interface for the LLM.
-  Look up the conversation titled "Search tool embed implementation" for examples of grep and seds and other commands that should have been this tool called.
 * Write and read tools should have path embedded in header/summary
 * Add date & time & location tools
 * Add a time to messages and include it as part of context to further messages

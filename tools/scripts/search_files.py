@@ -41,11 +41,11 @@ def main():
             print(json.dumps({"ok": False, "error": f"invalid regex: {e}"}))
             return
 
-    cmd = ["grep", "-rl", "-I", "--color=never"] if files_only else ["grep", "-rn", "-I", "--color=never"]
+    cmd = ["grep", "-rl", "-I", "--color=never"] if files_only else ["grep", "-rnH", "-I", "--color=never"]
     if ignore_case:
         cmd.append("-i")
-    if fixed:
-        cmd.append("-F")
+    # Default grep is basic regex where '|' is literal; -P gives the expected regex syntax.
+    cmd.append("-F" if fixed else "-P")
     if not files_only:
         if context > 0:
             cmd += ["-C", str(context)]
@@ -73,11 +73,17 @@ def main():
         print(json.dumps({"ok": False, "error": err}))
         return
 
-    lines = (proc.stdout or "").splitlines()
+    # max_matches counts matching lines only; context lines come along free.
+    lines = []
+    count = 0
     truncated = False
-    if len(lines) > max_matches:
-        lines = lines[:max_matches]
-        truncated = True
+    for ln in (proc.stdout or "").splitlines():
+        if files_only or re.match(r"^.*?:\d+:", ln):
+            if count >= max_matches:
+                truncated = True
+                break
+            count += 1
+        lines.append(ln)
     joined = "\n".join(lines)
     if len(joined) > MAX_OUTPUT:
         joined = joined[:MAX_OUTPUT] + "\n...(output truncated)"
@@ -87,7 +93,7 @@ def main():
         "pattern": pattern,
         "path": path,
         "matches": joined,
-        "count": len(lines),
+        "count": count,
         "truncated": truncated,
     }}))
 
