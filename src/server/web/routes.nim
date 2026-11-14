@@ -177,7 +177,7 @@ proc renderMessageList(s: AppState, msgs: seq[MsgRow], children: Table[int64, se
       result.add("<details class=\"reasoning\"><summary>Reasoning</summary><div>" & escapeHtml(content) & "</div></details>\n")
       inc i
     elif role == "assistant":
-      let calls = parseToolCalls(content)
+      let calls = parseToolCalls(content, s.toolRegistry)
       let visible = stripToolCalls(content)
       if visible.len > 0:
         result.add("<div class=\"msg assistant md\" data-md>" & escapeHtml(visible) & "</div>\n")

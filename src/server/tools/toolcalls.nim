@@ -3,7 +3,9 @@
 ## `{"name": "...", "arguments": {...}}` is still accepted. Non-nested, simple
 ## scan similar in spirit to ../formats/formats.nim's tag scanner.
 
-import std/[json, strutils]
+import std/[json, options, strutils]
+import ./registry
+import ./builtin
 
 type
   ParsedToolCall* = object
@@ -24,7 +26,21 @@ const
 
 const expectedForm = "expected exactly <tool_call>\n<function=tool_name>\n<parameter=param_name>\nvalue\n</parameter>\n</function>\n</tool_call>"
 
-proc parseXmlCall(body: string): ParsedToolCall =
+proc inputSchemaOf(reg: ToolRegistry, name: string): JsonNode =
+  ## The tool's input schema, or nil when the tool is unknown.
+  var raw = ""
+  let b = findBuiltin(name)
+  if b.isSome:
+    raw = b.get().inputSchema
+  elif reg != nil:
+    try: raw = reg.find(name).inputSchema
+    except KeyError: discard
+  if raw.len == 0:
+    return nil
+  try: parseJson(raw)
+  except CatchableError: nil
+
+proc parseXmlCall(body: string, reg: ToolRegistry): ParsedToolCall =
   ## Qwen form: `<function=NAME>` then `<parameter=KEY>VALUE</parameter>` per argument.
   let nameEnd = body.find('>', fnOpen.len)
   if nameEnd < 0:
@@ -32,6 +48,7 @@ proc parseXmlCall(body: string): ParsedToolCall =
   let name = body[fnOpen.len ..< nameEnd].strip()
   if name.len == 0:
     raise newException(ValueError, "empty function name")
+  let schema = inputSchemaOf(reg, name)
   var args = newJObject()
   var pos = nameEnd + 1
   while true:
@@ -49,15 +66,18 @@ proc parseXmlCall(body: string): ParsedToolCall =
     if val.startsWith("\n"): val = val[1 .. ^1]
     if val.endsWith("\n"): val.setLen(val.len - 1)
     pos = valEnd + paramClose.len
-    # Strings stay raw; objects, arrays, numbers and booleans are read as JSON.
+    # The schema decides: declared strings stay raw, anything else is read as JSON.
+    let declared = if schema != nil: schema{"properties"}{key}{"type"}.getStr("") else: ""
     let t = val.strip()
     var node = newJString(val)
-    if t.len > 0 and (t[0] in {'{', '[', '-'} or t[0] in Digits or t in ["true", "false", "null"]):
+    let jsonLike = t.len > 0 and (t[0] in {'{', '[', '-'} or t[0] in Digits or t in ["true", "false", "null"])
+    if declared != "string" and (declared.len > 0 or (schema == nil and jsonLike)):
       try: node = parseJson(t)
       except CatchableError: discard
     args[key] = node
   # Tolerate `<parameter=arguments>{...}</parameter>` wrapping the whole argument object.
-  if args.len == 1 and args.hasKey("arguments") and args["arguments"].kind == JObject:
+  if args.len == 1 and args.hasKey("arguments") and args["arguments"].kind == JObject and
+     (schema == nil or schema{"properties"}{"arguments"}.isNil):
     args = args["arguments"]
   ParsedToolCall(name: name, argsJson: $args)
 
@@ -88,7 +108,7 @@ proc parseBareNameCall(body: string): ParsedToolCall =
     args = if node.hasKey("arguments"): node["arguments"] else: node
   ParsedToolCall(name: name, argsJson: $args)
 
-proc parseToolCalls*(text: string): seq[ParsedToolCall] =
+proc parseToolCalls*(text: string, reg: ToolRegistry = nil): seq[ParsedToolCall] =
   result = @[]
   var pos = 0
   while true:
@@ -104,7 +124,7 @@ proc parseToolCalls*(text: string): seq[ParsedToolCall] =
     let snippet = if body.len > 160: body[0 ..< 160] & "..." else: body
     if body.startsWith(fnOpen):
       try:
-        result.add(parseXmlCall(body))
+        result.add(parseXmlCall(body, reg))
       except CatchableError as e:
         result.add(ParsedToolCall(malformed: true,
           error: "malformed tool_call (" & e.msg & "); you wrote: " & snippet & " -- " & expectedForm))

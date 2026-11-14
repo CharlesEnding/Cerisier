@@ -21,10 +21,6 @@
 * File search (structured grep/find) 
 * File tree
 * Image tools
-    * Rotate
-    * Crop
     * OCR
-    * Convert
-    * Resize
 * Image generation
 * Fetch emails

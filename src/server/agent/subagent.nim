@@ -96,7 +96,7 @@ proc runSubAgent*(env: SubAgentEnv, task, context: string, allow: seq[string]): 
         res.error = if reply.error.len > 0: reply.error else: "the sub-agent returned an empty reply"
         break
 
-      let calls = parseToolCalls(reply.content)
+      let calls = parseToolCalls(reply.content, env.registry)
       let visible = stripToolCalls(reply.content)
       if calls.len == 0:
         discard db.addMessage(env.convId, some(rootId), "assistant", visible)

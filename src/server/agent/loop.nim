@@ -126,7 +126,7 @@ proc runAgentTurn*(env: LoopEnv, convId: int64, sess: ChatSession,
     if reply.reasoning.len > 0:
       discard env.db.addMessage(convId, none(int64), "reasoning", reply.reasoning)
 
-    let calls = parseToolCalls(reply.content)
+    let calls = parseToolCalls(reply.content, env.registry)
     if calls.len == 0 or hooks.isCancelled():
       let visible = stripToolCalls(reply.content)
       if visible.len > 0:
