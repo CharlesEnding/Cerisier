@@ -2,6 +2,7 @@
 -1. Stop LLM from using cat over its file reading tool.
 -1. Make LLM batch the commands if they're not sequentially related (output of one needed for the other)
 0. Tool system improvement
+1. Add a time to messages, time it was sent and time it took
 2. Add a system prompt page with editable prompt.
 3. Writing files to /tmp shouldn't require approval, and agents and subagents should write any files they need to write over there. Each agent should have its own working directory actually.
 4. "Ask for help tool call that takes in an answer."

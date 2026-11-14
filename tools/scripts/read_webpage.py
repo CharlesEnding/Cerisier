@@ -20,6 +20,9 @@ import json
 import os
 import re
 import sys
+import warnings
+
+warnings.simplefilter("ignore")
 
 MAX_RETURN_BYTES = 1024 * 1024
 
