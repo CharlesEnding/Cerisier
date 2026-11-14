@@ -1,4 +1,4 @@
-
+-1. Make python package tool take multiple package search instad of a single one, also add option to return all packages
 -1. Stop LLM from using cat over its file reading tool.
 -1. Make LLM batch the commands if they're not sequentially related (output of one needed for the other)
 0. Tool system improvement
