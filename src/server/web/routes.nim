@@ -164,8 +164,11 @@ proc toolCallHtml(call: ParsedToolCall, resultContent: string): string =
   except CatchableError:
     ok = false
   let cls = if ok: "succeeded" else: "failed"
-  "<details class=\"tool-call result " & cls & "\"><summary>Tool call: " & escapeHtml(call.name & toolTarget(call)) &
-    "</summary><pre>" & escapeHtml(call.argsJson) & "</pre><pre>" & escapeHtml(resultContent) &
+  ## The args <pre> is tagged so the front-end can turn a replace_text call's
+  ## args into a coloured diff on reload (see toolDiffHtml in web/static/app.js).
+  "<details class=\"tool-call result " & cls & "\" data-tool-name=\"" & escapeAttr(call.name) &
+    "\"><summary>Tool call: " & escapeHtml(call.name & toolTarget(call)) &
+    "</summary><pre class=\"tool-args\">" & escapeHtml(call.argsJson) & "</pre><pre>" & escapeHtml(resultContent) &
     "</pre></details>\n"
 
 proc timeHtml(createdAt: string, extraClass = ""): string =

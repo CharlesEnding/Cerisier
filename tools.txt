@@ -1,21 +1,16 @@
-* Search w/ embedded result
-    * Web
-    * Github
-    * Steam
-    * Youtube
 * FFMPEg Wrapper for common operations
     * Extract frames
     * Compile frames into video
     * Extract audio
     * Trim
     * Crop timerange
-* Database interface (is that just SQL?)
-* Date & time
-* User context (who is he, where does he live, what does he want, ...)
 * Screenshot
 * Image tools
     * OCR
 * Image generation
 * Fetch emails
+* Memory key value store
+* Knowledge base key value store
+* Request decision or info from human -> shows text field
 * Tools that we allow us to reduce user asks:
-    * Read sandboxed (cwd concept)
+    * SQL select interface
