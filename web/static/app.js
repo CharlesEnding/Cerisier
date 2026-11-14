@@ -499,6 +499,31 @@ function connectChat(conversationId) {
         .catch((err) => fail(`Failed to switch model: ${err}`));
     });
   }
+
+  // ---- working directory --------------------------------------------------
+  const workdirInput = document.getElementById('workdir-input');
+  const workdirSave = document.getElementById('workdir-save');
+  if (workdirInput && workdirSave) {
+    const applyWorkdir = () => {
+      const value = workdirInput.value.trim();
+      fetch(`/chat/${conversationId}/workdir`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ working_dir: value }),
+      })
+        .then((r) => r.json())
+        .then((data) => {
+          if (!data.success) { note(`Failed to set working dir: ${data.error || 'unknown error'}`); return; }
+          workdirInput.value = data.working_dir || '';
+          note(value ? `Working directory set to ${value}` : 'Working directory cleared');
+        })
+        .catch((err) => note(`Failed to set working dir: ${err}`));
+    };
+    workdirSave.addEventListener('click', applyWorkdir);
+    workdirInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); applyWorkdir(); }
+    });
+  }
 }
 
 // ---------------------------------------------------------------- models page

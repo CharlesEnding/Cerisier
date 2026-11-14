@@ -43,6 +43,8 @@ when isMainModule:
   app.get("/conversations/new", newConversationGet)
   app.post("/chat/{id}/model", chatModelPost)
   app.post("/chat/{id}/todos/clear", todosClearPost)
+  app.get("/chat/{id}/workdir", workdirGet)
+  app.post("/chat/{id}/workdir", workdirPost)
   app.post("/chat/{id}/upload", uploadPost)
   app.get("/files/{fid}", fileGet)
   app.get("/history", historyPage)

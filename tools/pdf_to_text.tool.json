@@ -5,10 +5,17 @@
   "entrypoint": "tools/scripts/pdf_to_text.py",
   "input_schema": {
     "type": "object",
-    "required": ["input_path", "output_path"],
+    "required": [
+      "input_path",
+      "output_path"
+    ],
     "properties": {
-      "input_path": {"type": "string"},
-      "output_path": {"type": "string"},
+      "input_path": {
+        "type": "string"
+      },
+      "output_path": {
+        "type": "string"
+      },
       "pages": {
         "type": "string",
         "description": "1-based range e.g. '1-3,5,7-9'. Omit for all pages."
@@ -21,14 +28,31 @@
   },
   "output_schema": {
     "type": "object",
-    "required": ["output_path", "pages_extracted", "total_pages", "characters"],
+    "required": [
+      "output_path",
+      "pages_extracted",
+      "total_pages",
+      "characters"
+    ],
     "properties": {
-      "output_path": {"type": "string"},
-      "pages_extracted": {"type": "integer"},
-      "total_pages": {"type": "integer"},
-      "characters": {"type": "integer"}
+      "output_path": {
+        "type": "string"
+      },
+      "pages_extracted": {
+        "type": "integer"
+      },
+      "total_pages": {
+        "type": "integer"
+      },
+      "characters": {
+        "type": "integer"
+      }
     }
   },
   "timeout_ms": 30000,
-  "permission": "ask"
+  "permission": "ask",
+  "path_args": [
+    "input_path",
+    "output_path"
+  ]
 }

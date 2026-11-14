@@ -250,6 +250,7 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
   let banner = await backendStatusBanner(s)
 
   let todosJson = $todosToJson(s.db.listTodos(currentId))
+  let wd = s.db.getConversationWorkingDir(currentId)
   ## Embedded in a <script>: make sure model-written text can't close the tag.
   let formatsScript = formatsJson(s.db).replace("<", "\\u003c")
 
@@ -259,6 +260,10 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
     <h1 id="chat-title">{escapeHtml(title)}</h1>
     <label for="model-select">Model:</label>
     <select id="model-select">{modelOptions}</select>
+    <label for="workdir-input" id="workdir-label">Working dir:</label>
+    <input id="workdir-input" type="text" value="{escapeAttr(wd)}" size="24" spellcheck="false"
+      placeholder="/absolute/path" title="Tools run with this as their working directory; the auto_workdir permission auto-approves file tools whose paths stay inside it.">
+    <button type="button" id="workdir-save">Set</button>
   </div>
   <div id="chat-log">{log}</div>
   <div id="chat-compose">
@@ -667,6 +672,10 @@ proc makeWebHooks(s: AppState, st: ChatTurnState, queue: TokenQueue): AgentHooks
     st.cancelled
   result = AgentHooks(emit: emitEvent, askApproval: askFn, isCancelled: cancelledFn)
 
+proc executeApproved(s: AppState, convId, id: int64, toolName, argsJson: string) {.async, gcsafe.} =
+  await s.toolExecutor.execute(convId, id, toolName, argsJson)
+  resolveApproval(s, id)
+
 proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
                         st: ChatTurnState, content: string, fileIds: seq[int64]) {.async, gcsafe.} =
   st.generating = true
@@ -765,10 +774,7 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
             s.toolExecutor.setSessionPermission(convId, toolName, ptAuto)
           s.toolExecutor.approve(id)
           let (_, _, toolName, argsJson) = s.db.getToolCall(id)
-          asyncCheck (proc() {.async, gcsafe.} =
-            await s.toolExecutor.execute(id, toolName, argsJson)
-            resolveApproval(s, id)
-          )()
+          asyncCheck executeApproved(s, convId, id, toolName, argsJson)
       of "tool_call_deny":
         let id = node{"id"}.getInt(0).int64
         let always = node{"always"}.getBool(false)
@@ -800,6 +806,32 @@ proc todosClearPost*(ctx: Context) {.async, gcsafe.} =
     s.db.clearTodos(convId)
     resp jsonResponse(%*{"success": true})
   except CatchableError as e:
+    resp jsonResponse(%*{"success": false, "error": e.msg})
+
+proc workdirGet*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  try:
+    let convId = parseBiggestInt(ctx.getPathParams("id")).int64
+    let wd = s.db.getConversationWorkingDir(convId)
+    resp jsonResponse(%*{"success": true, "working_dir": wd})
+  except CatchableError as e:
+    resp jsonResponse(%*{"success": false, "error": e.msg})
+
+proc workdirPost*(ctx: Context) {.async, gcsafe.} =
+  ## Set the conversation's working directory. Stored verbatim (after trim);
+  ## the gate normalises it with realpath at dispatch time, so there's no
+  ## need to validate existence here (the user may point it at a dir they
+  ## will create later, or a path relative to the host that a tool resolves).
+  ## Empty string clears it.
+  let s = getState()
+  try:
+    let convId = parseBiggestInt(ctx.getPathParams("id")).int64
+    let wd = parseJson(ctx.request.body){"working_dir"}.getStr("").strip()
+    s.db.setConversationWorkingDir(convId, wd)
+    logInfo("routes", "conversation " & $convId & " working directory set to '" & wd & "'")
+    resp jsonResponse(%*{"success": true, "working_dir": wd})
+  except CatchableError as e:
+    logError("routes", "set working dir failed: " & $e.name & ": " & e.msg)
     resp jsonResponse(%*{"success": false, "error": e.msg})
 
 proc uploadPost*(ctx: Context) {.async, gcsafe.} =

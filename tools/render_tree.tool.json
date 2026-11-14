@@ -6,23 +6,54 @@
   "input_schema": {
     "type": "object",
     "properties": {
-      "path": {"type": "string", "description": "Directory to render (default '.')."},
-      "max_depth": {"type": "integer", "description": "Max recursion depth (default 3)."},
-      "max_entries": {"type": "integer", "description": "Cap on total entries rendered (default 200)."},
-      "show_hidden": {"type": "boolean", "description": "Include dotfiles (default false)."},
-      "dirs_only": {"type": "boolean", "description": "Show directories only (default false)."}
+      "path": {
+        "type": "string",
+        "description": "Directory to render (default '.')."
+      },
+      "max_depth": {
+        "type": "integer",
+        "description": "Max recursion depth (default 3)."
+      },
+      "max_entries": {
+        "type": "integer",
+        "description": "Cap on total entries rendered (default 200)."
+      },
+      "show_hidden": {
+        "type": "boolean",
+        "description": "Include dotfiles (default false)."
+      },
+      "dirs_only": {
+        "type": "boolean",
+        "description": "Show directories only (default false)."
+      }
     }
   },
   "output_schema": {
     "type": "object",
-    "required": ["path", "tree", "count", "truncated"],
+    "required": [
+      "path",
+      "tree",
+      "count",
+      "truncated"
+    ],
     "properties": {
-      "path": {"type": "string"},
-      "tree": {"type": "string"},
-      "count": {"type": "integer"},
-      "truncated": {"type": "boolean"}
+      "path": {
+        "type": "string"
+      },
+      "tree": {
+        "type": "string"
+      },
+      "count": {
+        "type": "integer"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
     }
   },
   "timeout_ms": 5000,
-  "permission": "auto"
+  "permission": "auto",
+  "path_args": [
+    "path"
+  ]
 }

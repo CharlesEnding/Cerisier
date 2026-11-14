@@ -5,7 +5,9 @@
   "entrypoint": "tools/scripts/read_webpage.py",
   "input_schema": {
     "type": "object",
-    "required": ["url"],
+    "required": [
+      "url"
+    ],
     "properties": {
       "url": {
         "type": "string",
@@ -39,18 +41,44 @@
   },
   "output_schema": {
     "type": "object",
-    "required": ["title", "status_code", "content_type", "characters", "truncated", "content"],
+    "required": [
+      "title",
+      "status_code",
+      "content_type",
+      "characters",
+      "truncated",
+      "content"
+    ],
     "properties": {
-      "title": {"type": "string"},
-      "status_code": {"type": "integer"},
-      "content_type": {"type": "string"},
-      "characters": {"type": "integer"},
-      "truncated": {"type": "boolean"},
-      "content": {"type": "string"},
-      "selector_found": {"type": "boolean"},
-      "output_path": {"type": "string"}
+      "title": {
+        "type": "string"
+      },
+      "status_code": {
+        "type": "integer"
+      },
+      "content_type": {
+        "type": "string"
+      },
+      "characters": {
+        "type": "integer"
+      },
+      "truncated": {
+        "type": "boolean"
+      },
+      "content": {
+        "type": "string"
+      },
+      "selector_found": {
+        "type": "boolean"
+      },
+      "output_path": {
+        "type": "string"
+      }
     }
   },
   "timeout_ms": 45000,
-  "permission": "ask"
+  "permission": "ask",
+  "path_args": [
+    "output_path"
+  ]
 }

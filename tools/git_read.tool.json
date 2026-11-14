@@ -5,26 +5,69 @@
   "entrypoint": "tools/scripts/git_read.py",
   "input_schema": {
     "type": "object",
-    "required": ["action"],
+    "required": [
+      "action"
+    ],
     "properties": {
-      "action": {"type": "string", "enum": ["status", "diff", "log", "show", "branch"], "description": "Which read-only git command to run."},
-      "repo": {"type": "string", "description": "Repo directory (default '.')."},
-      "path": {"type": "string", "description": "Optional path restriction for diff/log."},
-      "ref": {"type": "string", "description": "Commit/ref to show (required for 'show')."},
-      "limit": {"type": "integer", "description": "Max log entries (default 20)."}
+      "action": {
+        "type": "string",
+        "enum": [
+          "status",
+          "diff",
+          "log",
+          "show",
+          "branch"
+        ],
+        "description": "Which read-only git command to run."
+      },
+      "repo": {
+        "type": "string",
+        "description": "Repo directory (default '.')."
+      },
+      "path": {
+        "type": "string",
+        "description": "Optional path restriction for diff/log."
+      },
+      "ref": {
+        "type": "string",
+        "description": "Commit/ref to show (required for 'show')."
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Max log entries (default 20)."
+      }
     }
   },
   "output_schema": {
     "type": "object",
-    "required": ["action", "repo", "output", "exit_code"],
+    "required": [
+      "action",
+      "repo",
+      "output",
+      "exit_code"
+    ],
     "properties": {
-      "action": {"type": "string"},
-      "repo": {"type": "string"},
-      "output": {"type": "string"},
-      "exit_code": {"type": "integer"},
-      "truncated": {"type": "boolean"}
+      "action": {
+        "type": "string"
+      },
+      "repo": {
+        "type": "string"
+      },
+      "output": {
+        "type": "string"
+      },
+      "exit_code": {
+        "type": "integer"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
     }
   },
   "timeout_ms": 10000,
-  "permission": "auto"
+  "permission": "auto",
+  "path_args": [
+    "repo",
+    "path"
+  ]
 }

@@ -5,10 +5,17 @@
   "entrypoint": "tools/scripts/pdf_split.py",
   "input_schema": {
     "type": "object",
-    "required": ["input_path", "output_dir"],
+    "required": [
+      "input_path",
+      "output_dir"
+    ],
     "properties": {
-      "input_path": {"type": "string"},
-      "output_dir": {"type": "string"},
+      "input_path": {
+        "type": "string"
+      },
+      "output_dir": {
+        "type": "string"
+      },
       "prefix": {
         "type": "string",
         "description": "Filename prefix (default 'page')."
@@ -17,16 +24,30 @@
   },
   "output_schema": {
     "type": "object",
-    "required": ["output_dir", "pages", "files"],
+    "required": [
+      "output_dir",
+      "pages",
+      "files"
+    ],
     "properties": {
-      "output_dir": {"type": "string"},
-      "pages": {"type": "integer"},
+      "output_dir": {
+        "type": "string"
+      },
+      "pages": {
+        "type": "integer"
+      },
       "files": {
         "type": "array",
-        "items": {"type": "string"}
+        "items": {
+          "type": "string"
+        }
       }
     }
   },
   "timeout_ms": 30000,
-  "permission": "ask"
+  "permission": "ask",
+  "path_args": [
+    "input_path",
+    "output_dir"
+  ]
 }

@@ -5,25 +5,45 @@
   "entrypoint": "tools/scripts/pdf_merge.py",
   "input_schema": {
     "type": "object",
-    "required": ["input_paths", "output_path"],
+    "required": [
+      "input_paths",
+      "output_path"
+    ],
     "properties": {
       "input_paths": {
         "type": "array",
-        "items": {"type": "string"},
+        "items": {
+          "type": "string"
+        },
         "description": "Input PDF paths, merged in this order."
       },
-      "output_path": {"type": "string"}
+      "output_path": {
+        "type": "string"
+      }
     }
   },
   "output_schema": {
     "type": "object",
-    "required": ["output_path", "pages", "files"],
+    "required": [
+      "output_path",
+      "pages",
+      "files"
+    ],
     "properties": {
-      "output_path": {"type": "string"},
-      "pages": {"type": "integer"},
-      "files": {"type": "integer"}
+      "output_path": {
+        "type": "string"
+      },
+      "pages": {
+        "type": "integer"
+      },
+      "files": {
+        "type": "integer"
+      }
     }
   },
   "timeout_ms": 30000,
-  "permission": "ask"
+  "permission": "ask",
+  "path_args": [
+    "output_path"
+  ]
 }

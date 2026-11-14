@@ -5,19 +5,33 @@
   "entrypoint": "tools/scripts/write_local_file.py",
   "input_schema": {
     "type": "object",
-    "required": ["path", "content"],
+    "required": [
+      "path",
+      "content"
+    ],
     "properties": {
-      "path": {"type": "string"},
-      "content": {"type": "string"}
+      "path": {
+        "type": "string"
+      },
+      "content": {
+        "type": "string"
+      }
     }
   },
   "output_schema": {
     "type": "object",
-    "required": ["bytes_written"],
+    "required": [
+      "bytes_written"
+    ],
     "properties": {
-      "bytes_written": {"type": "integer"}
+      "bytes_written": {
+        "type": "integer"
+      }
     }
   },
   "timeout_ms": 10000,
-  "permission": "ask"
+  "permission": "ask",
+  "path_args": [
+    "path"
+  ]
 }

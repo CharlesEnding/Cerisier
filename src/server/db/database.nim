@@ -121,6 +121,9 @@ proc migrate*(db: Database) =
       status TEXT NOT NULL DEFAULT 'pending'
     );
   """)
+  ## Column added after the table already exists in older databases, so use
+  ## the idempotent ALTER path rather than the CREATE TABLE above.
+  db.ensureColumn("agent_conversations", "working_dir", "TEXT NOT NULL DEFAULT ''")
 
 # ---- conversations ----
 
@@ -139,6 +142,18 @@ proc getConversationTitle*(db: Database, conversationId: int64): string =
 
 proc updateConversationTitle*(db: Database, conversationId: int64, title: string) =
   db.conn.exec(sql"UPDATE agent_conversations SET title = ? WHERE id = ?", title, conversationId)
+
+proc getConversationWorkingDir*(db: Database, conversationId: int64): string =
+  ## The conversation's configured working directory, or "" when unset. The
+  ## harness reads this to (1) decide the auto_workdir gate and (2) set the
+  ## subprocess cwd / CERISIER_WORKING_DIR so the tool sees the real directory
+  ## rather than something the model could lie about.
+  for row in db.conn.fastRows(sql"SELECT COALESCE(working_dir, '') FROM agent_conversations WHERE id = ?", conversationId):
+    return row[0]
+  ""
+
+proc setConversationWorkingDir*(db: Database, conversationId: int64, workingDir: string) =
+  db.conn.exec(sql"UPDATE agent_conversations SET working_dir = ? WHERE id = ?", workingDir, conversationId)
 
 # ---- messages ----
 

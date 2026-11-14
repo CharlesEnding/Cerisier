@@ -56,6 +56,8 @@ proc buildSystemPrompt*(db: Database, reg: ToolRegistry, convId: int64, promptFi
   var vars = initTable[string, string]()
   vars["date"] = now().format("yyyy-MM-dd (dddd)")
   vars["os"] = hostOS
+  let wd = db.getConversationWorkingDir(convId)
+  vars["working_dir"] = if wd.len > 0: wd else: "(none — tools run in the harness's own directory)"
 
   var tools = toolCallPreamble()
   tools.add("")

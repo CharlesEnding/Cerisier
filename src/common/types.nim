@@ -10,6 +10,9 @@ type
 
   ToolPermission* = enum
     ptAuto = "auto"     ## runs immediately, no chat interaction needed
+    ptAutoWorkdir = "auto_workdir"  ## auto only if every declared path arg resolves under the
+                                    ## conversation's working directory (see isWithinWorkingDir in
+                                    ## executor.nim); otherwise falls back to the normal `ask` gate
     ptAsk = "ask"       ## default: pending_approval row + chat approve/deny UI
     ptDeny = "deny"     ## registered/discoverable but never dispatchable
 
@@ -22,6 +25,9 @@ type
     outputSchema*: string     ## raw JSON schema describing the `data` field of a successful result
     timeoutMs*: int
     permission*: ToolPermission
+    pathArgs*: seq[string]    ## names of input fields holding filesystem paths; used by the
+                              ## auto_workdir gate to decide whether the call stays inside the
+                              ## conversation's working directory
 
   ToolCallStatus* = enum
     tcsPendingApproval = "pending_approval"

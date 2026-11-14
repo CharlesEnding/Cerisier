@@ -62,5 +62,9 @@
     }
   },
   "timeout_ms": 10000,
-  "permission": "ask"
+  "permission": "ask",
+  "path_args": [
+    "input_path",
+    "output_path"
+  ]
 }

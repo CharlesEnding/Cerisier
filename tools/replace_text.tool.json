@@ -5,23 +5,51 @@
   "entrypoint": "tools/scripts/replace_text.py",
   "input_schema": {
     "type": "object",
-    "required": ["path", "old", "new"],
+    "required": [
+      "path",
+      "old",
+      "new"
+    ],
     "properties": {
-      "path": {"type": "string"},
-      "old": {"type": "string", "description": "Exact substring to find (must not be empty)."},
-      "new": {"type": "string", "description": "Replacement text (may be empty to delete)."},
-      "count": {"type": "integer", "description": "Number of occurrences to replace (default 1; -1 = all)."}
+      "path": {
+        "type": "string"
+      },
+      "old": {
+        "type": "string",
+        "description": "Exact substring to find (must not be empty)."
+      },
+      "new": {
+        "type": "string",
+        "description": "Replacement text (may be empty to delete)."
+      },
+      "count": {
+        "type": "integer",
+        "description": "Number of occurrences to replace (default 1; -1 = all)."
+      }
     }
   },
   "output_schema": {
     "type": "object",
-    "required": ["path", "replaced", "total_occurrences"],
+    "required": [
+      "path",
+      "replaced",
+      "total_occurrences"
+    ],
     "properties": {
-      "path": {"type": "string"},
-      "replaced": {"type": "integer"},
-      "total_occurrences": {"type": "integer"}
+      "path": {
+        "type": "string"
+      },
+      "replaced": {
+        "type": "integer"
+      },
+      "total_occurrences": {
+        "type": "integer"
+      }
     }
   },
   "timeout_ms": 5000,
-  "permission": "ask"
+  "permission": "ask",
+  "path_args": [
+    "path"
+  ]
 }

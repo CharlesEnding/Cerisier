@@ -17,6 +17,16 @@ proc parsePermission(node: JsonNode): ToolPermission =
     return ptAuto
   ptAsk
 
+proc parsePathArgs(node: JsonNode): seq[string] =
+  ## Names of input fields that hold filesystem paths, read from the manifest's
+  ## optional `path_args` array. Used by the `auto_workdir` permission gate.
+  result = @[]
+  let n = node{"path_args"}
+  if n != nil and n.kind == JArray:
+    for e in n:
+      if e.kind == JString:
+        result.add(e.getStr())
+
 proc parseManifest(node: JsonNode): ToolManifest =
   ToolManifest(
     name: node{"name"}.getStr(""),
@@ -27,6 +37,7 @@ proc parseManifest(node: JsonNode): ToolManifest =
     outputSchema: $node{"output_schema"},
     timeoutMs: node{"timeout_ms"}.getInt(30_000),
     permission: parsePermission(node),
+    pathArgs: parsePathArgs(node),
   )
 
 proc scanToolsDir*(dir: string): seq[ToolManifest] =
@@ -73,6 +84,7 @@ proc saveManifest*(reg: ToolRegistry, m: ToolManifest) =
     "output_schema": (try: parseJson(m.outputSchema) except CatchableError: newJObject()),
     "timeout_ms": m.timeoutMs,
     "permission": $m.permission,
+    "path_args": m.pathArgs,
   }
   writeFile(reg.manifestPath(m.name), node.pretty())
   reg.reload()

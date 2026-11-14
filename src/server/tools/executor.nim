@@ -13,7 +13,7 @@
 ## "kill" request from chat: the wait loops yield via `sleepAsync` between
 ## polls instead of blocking the whole event loop for the tool's runtime.
 
-import std/[json, tables, strutils, asyncdispatch, options, osproc]
+import std/[json, tables, strutils, asyncdispatch, options, osproc, os]
 import ../db/database
 import ../../common/types
 import ./registry
@@ -63,12 +63,77 @@ proc setSessionPermission*(ex: ToolExecutor, convId: int64, toolName: string, pe
     ex.sessionPermissions[convId] = initTable[string, ToolPermission]()
   ex.sessionPermissions[convId][toolName] = permission
 
+proc workingDirFor*(ex: ToolExecutor, convId: int64): string =
+  ## The conversation's stored working directory, or "" when unset. Read from
+  ## the DB, never from the model, so the model cannot steer the gate or the
+  ## subprocess cwd by lying about a path.
+  ex.db.getConversationWorkingDir(convId)
+
+proc resolveWithin(workdir, candidate: string): bool =
+  ## True when `candidate`, after normalising `..`/`.` via absolutePath,
+  ## still lies at or under `workdir`. absolutePath works on paths that don't
+  ## exist yet, so a write to a new file inside the dir is judged correctly.
+  let real = absolutePath(candidate, workdir)
+  return real == workdir or real.startsWith(workdir & DirSep)
+
+proc isWithinWorkingDir*(workdir, manifestPathArgs: string, argsJson: string): bool =
+  ## Decide whether every declared filesystem-path argument in this call
+  ## resolves under `workdir`. Returns false (force approval) when `workdir`
+  ## is unset, so an unset working directory never auto-approves anything.
+  ##
+  ## `manifestPathArgs` is the comma-separated list of arg names taken from
+  ## the manifest's `path_args`. A tool with no path_args has nothing to
+  ## constrain and is therefore treated as *not* provably in the directory
+  ## (fail closed) — callers that want cwd-bound auto-approval (e.g.
+  ## run_command) must opt in explicitly, which is why those tools keep
+  ## `ask`.
+  ##
+  ## Note: containment is decided by lexical path normalisation, so `..`
+  ## traversal and absolute paths are caught; a symlink that points outside
+  ## the working directory is not (a deeper threat model that the sandboxed
+  ## working dir is expected to mitigate).
+  if workdir.len == 0:
+    return false
+  let names = manifestPathArgs.split(",")
+  if names.len == 0 or (names.len == 1 and names[0].strip().len == 0):
+    return false
+  var args: JsonNode
+  try:
+    args = parseJson(argsJson)
+  except CatchableError:
+    return false
+  if args.kind != JObject:
+    return false
+  let wd = absolutePath(workdir)
+  for name in names:
+    let key = name.strip()
+    if key.len == 0:
+      continue
+    if not args.hasKey(key):
+      continue ## absent optional path arg: nothing outside the dir to worry about
+    let val = args[key]
+    if val.kind != JString:
+      return false
+    let p = val.getStr()
+    if p.len == 0:
+      return false
+    ## absolutePath resolves a relative `p` against `wd`; an absolute `p`
+    ## is returned normalised (base ignored).
+    let target = absolutePath(p, wd)
+    if not resolveWithin(wd, target):
+      return false
+  return true
+
 proc requestToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, argsJson: string): int64 =
   ## Always creates a tool_calls row. Resolves the effective permission
   ## (session override, else the manifest's own) and, for `auto`/`deny`,
   ## immediately drives the row to a terminal state or to `approved` without
   ## ever prompting the chat UI — `ask` (the default) leaves it
   ## `pending_approval` for the caller to surface an inline approve/deny prompt.
+  ##
+  ## `auto_workdir` is auto only when every declared path arg resolves under
+  ## the conversation's working directory; otherwise it falls back to the
+  ## normal `ask` gate (stays `pending_approval`).
   var manifest: ToolManifest
   try:
     manifest = ex.registry.find(toolName)
@@ -87,6 +152,15 @@ proc requestToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, args
       ex.db.setToolCallResult(id, $tcsValidationFailed, failure(schemaErrorsMsg(errors)))
     else:
       ex.db.setToolCallStatus(id, $tcsApproved)
+  of ptAutoWorkdir:
+    let wd = ex.workingDirFor(convId)
+    if isWithinWorkingDir(wd, manifest.pathArgs.join(","), argsJson):
+      let errors = validateArgs(manifest, argsJson)
+      if errors.len > 0:
+        ex.db.setToolCallResult(id, $tcsValidationFailed, failure(schemaErrorsMsg(errors)))
+      else:
+        ex.db.setToolCallStatus(id, $tcsApproved)
+    ## else: leave pending_approval -> caller prompts the chat UI (fail closed)
   of ptAsk:
     discard ## stays pending_approval; caller prompts the chat UI
   id
@@ -135,9 +209,13 @@ proc finishWithOutput(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifes
 
   ex.db.setToolCallResult(toolCallId, $tcsSucceeded, $(%*{"ok": true, "data": dataNode}))
 
-proc executeLocally(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifest, argsJson: string) {.async.} =
+proc executeLocally(ex: ToolExecutor, convId, toolCallId: int64, manifest: ToolManifest, argsJson: string) {.async.} =
   ex.db.setToolCallStatus(toolCallId, $tcsRunning)
-  let p = startLocal(manifest, argsJson)
+  ## The subprocess runs with cwd = the conversation's working directory (when
+  ## set), so a relative path in a tool argument resolves inside it and the
+  ## child sees the canonical value via CERISIER_WORKING_DIR. Empty when unset
+  ## (inherits the server's cwd — the old behaviour).
+  let p = startLocal(manifest, argsJson, ex.workingDirFor(convId))
   ex.runningProcesses[toolCallId] = p
 
   var waited = 0
@@ -168,7 +246,7 @@ proc executeLocally(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifest,
     return
   finishWithOutput(ex, toolCallId, manifest, output)
 
-proc execute*(ex: ToolExecutor, toolCallId: int64, toolName, argsJson: string) {.async.} =
+proc execute*(ex: ToolExecutor, convId, toolCallId: int64, toolName, argsJson: string) {.async.} =
   ## Runs an already-approved tool call and records the result. Re-validates
   ## input against the schema (defense in depth: args could have been
   ## hand-edited, or the manifest could have changed, between request and
@@ -185,7 +263,7 @@ proc execute*(ex: ToolExecutor, toolCallId: int64, toolName, argsJson: string) {
     ex.db.setToolCallResult(toolCallId, $tcsValidationFailed, failure(schemaErrorsMsg(inputErrors)))
     return
 
-  await ex.executeLocally(toolCallId, manifest, argsJson)
+  await ex.executeLocally(convId, toolCallId, manifest, argsJson)
 
 proc dispatchToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, argsJson: string,
                        askUser: ApprovalHook): Future[DispatchResult] {.async.} =
@@ -201,6 +279,6 @@ proc dispatchToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, arg
     await askUser(id, toolName, argsJson)
     row = ex.db.getToolCall(id)
   elif row.status == $tcsApproved:
-    await ex.execute(id, toolName, argsJson)
+    await ex.execute(convId, id, toolName, argsJson)
     row = ex.db.getToolCall(id)
   DispatchResult(id: id, status: row.status, resultJson: row.resultJson)

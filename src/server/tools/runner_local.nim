@@ -11,16 +11,32 @@
 import std/[osproc, streams, os]
 import ../../common/types
 
-proc startLocal*(manifest: ToolManifest, argsJson: string): Process =
+proc startLocal*(manifest: ToolManifest, argsJson: string, cwd: string = ""): Process =
   ## `argsJson` is passed as a single CLI argument (the tool is responsible
   ## for parsing it); this keeps the runner generic across nim/python/shell.
+  ##
+  ## `cwd` (when non-empty) is set as the process's working directory and is
+  ## also exported as `CERISIER_WORKING_DIR`. The harness passes the
+  ## conversation's stored working directory here so a relative path in a
+  ## tool argument resolves inside it by construction, and a tool can read
+  ## the canonical value from the environment rather than trusting something
+  ## the model wrote into its own args. When `cwd` is empty we leave the
+  ## environment untouched (pass `[]`) so the child inherits the server's
+  ## environment exactly as before — no working directory set means no change
+  ## to the old behaviour.
   let (cmd, cmdArgs) =
     case manifest.kind
     of tkNimBinary: (manifest.entrypoint, @[argsJson])
     of tkPython: ("python3", @[manifest.entrypoint, argsJson])
     of tkShell: ("/bin/sh", @["-c", manifest.entrypoint & " " & quoteShell(argsJson)])
 
-  startProcess(cmd, args = cmdArgs, options = {poUsePath, poStdErrToStdOut})
+  ## `dir = cwd` makes the child run inside the conversation's working directory
+  ## (when set), so a relative path in a tool argument resolves there by
+  ## construction, and the child can read it via os.getcwd(). The harness sets
+  ## this, never the model, so the model can't steer it by lying about a path.
+  ## When cwd is "" (unset) we pass the empty env/dir defaults so the child
+  ## inherits the server's environment and working directory exactly as before.
+  startProcess(cmd, args = cmdArgs, workingDir = cwd, options = {poUsePath, poStdErrToStdOut})
 
 proc readAndClose*(p: Process, maxBytes: int = 1_000_000): string =
   ## Drains whatever output the (already-exited, or just-killed) process

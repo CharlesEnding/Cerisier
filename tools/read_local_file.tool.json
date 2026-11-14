@@ -5,22 +5,44 @@
   "entrypoint": "tools/scripts/read_local_file.py",
   "input_schema": {
     "type": "object",
-    "required": ["path"],
+    "required": [
+      "path"
+    ],
     "properties": {
-      "path": {"type": "string"},
-      "offset": {"type": "integer", "description": "Byte offset to start reading from (default 0)."},
-      "length": {"type": "integer", "description": "Max bytes to read (default and cap 1048576)."},
-      "line_numbers": {"type": "boolean", "description": "Prefix each returned line with its 1-based line number (default false)."}
+      "path": {
+        "type": "string"
+      },
+      "offset": {
+        "type": "integer",
+        "description": "Byte offset to start reading from (default 0)."
+      },
+      "length": {
+        "type": "integer",
+        "description": "Max bytes to read (default and cap 1048576)."
+      },
+      "line_numbers": {
+        "type": "boolean",
+        "description": "Prefix each returned line with its 1-based line number (default false)."
+      }
     }
   },
   "output_schema": {
     "type": "object",
-    "required": ["content"],
+    "required": [
+      "content"
+    ],
     "properties": {
-      "content": {"type": "string"},
-      "truncated": {"type": "boolean"}
+      "content": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
     }
   },
   "timeout_ms": 10000,
-  "permission": "ask"
+  "permission": "auto_workdir",
+  "path_args": [
+    "path"
+  ]
 }
