@@ -1,0 +1,39 @@
+{
+  "name": "write_tmp_file",
+  "description": "Write text content to a scratch file under /tmp/cerisier/ (parent directories are created) and return its full path. Runs without approval. Use it for intermediary files such as scripts, notes or data you need while working; use write_local_file for files the user wants saved.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/write_tmp_file.py",
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "name",
+      "content"
+    ],
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "File name relative to /tmp/cerisier/, e.g. \"scan.py\" or \"job1/out.txt\"."
+      },
+      "content": {
+        "type": "string"
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "path",
+      "bytes_written"
+    ],
+    "properties": {
+      "path": {
+        "type": "string"
+      },
+      "bytes_written": {
+        "type": "integer"
+      }
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "auto"
+}

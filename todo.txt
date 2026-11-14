@@ -1,7 +1,6 @@
 -1. Make LLM batch the commands if they're not sequentially related (output of one needed for the other)
 0. Tool system improvement
 2. Add a system prompt page with editable prompt.
-3. Writing files to /tmp shouldn't require approval, and agents and subagents should write any files they need to write over there. Each agent should have its own working directory actually.
 4. "Ask for help tool call that takes in an answer."
 5. Fix loops
 7. Tool & skill marketplace
@@ -12,10 +11,5 @@
 13. Different subagent types with different permissions and launch permissions:
     thinking agent with no command -> automatic launch
 14. Command summary. A command tool call should explain what it does and whether it's safe.
-15. Add conversation delete button with confirmation in history page
 16. Sparsity of tool calls and steps before doing the work.
 17. Replace tool call should have a diff maybe, better formatting or something
-
-Easy:
-* Add date & time & location tools
-* Add a time to messages and include it as part of context to further messages

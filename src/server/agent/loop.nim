@@ -3,6 +3,7 @@
 ## web UI and the HTTP API both drive it through `AgentHooks`.
 
 import std/[json, options, asyncdispatch]
+from std/times import parse, utc, local, format
 import ../db/database
 import ../api/client
 import ../api/session
@@ -30,6 +31,13 @@ type
     reply*: StreamingReply
     history*: seq[ChatMsg]   ## the last history sent to the model
 
+proc stamp(createdAt: string): string =
+  ## The DB stores UTC; the model sees the host's local time.
+  try:
+    "[" & parse(createdAt, "yyyy-MM-dd HH:mm:ss", utc()).local.format("yyyy-MM-dd HH:mm") & "] "
+  except CatchableError:
+    ""
+
 proc buildHistory*(env: LoopEnv, convId: int64, visionOk: bool): seq[ChatMsg] =
   ## The main model's context: system prompt (tools, formatting, todo + file
   ## snapshot) plus the *top-level* messages. Messages that belong to a
@@ -45,11 +53,14 @@ proc buildHistory*(env: LoopEnv, convId: int64, visionOk: bool): seq[ChatMsg] =
     if role == "reasoning":
       continue ## not a valid chat-completions role; kept in the DB only for display
     if role == "user":
+      let text = stamp(createdAt) & msgContent
       let att = describeAttachments(env.db, env.dataDir, mid, visionOk)
       if att.note.len > 0 or att.images.len > 0:
-        result.add(chatMsg(role, msgContent & att.note, att.images))
-        continue
-    result.add(chatMsg(role, msgContent))
+        result.add(chatMsg(role, text & att.note, att.images))
+      else:
+        result.add(chatMsg(role, text))
+      continue
+    result.add(chatMsg(role, if role == "assistant": stamp(createdAt) & msgContent else: msgContent))
 
 proc runBuiltinCall(env: LoopEnv, convId, assistantMsgId: int64, hooks: AgentHooks,
                     toolName, argsJson: string): string =

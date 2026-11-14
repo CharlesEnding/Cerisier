@@ -30,7 +30,7 @@ function el(tag, cls, text) {
 const TOOL_TARGET_ARG = {
   read_local_file: 'path', write_local_file: 'path', replace_text: 'path',
   list_dir: 'path', render_tree: 'path', search_files: 'path',
-  read_file: 'name', write_file: 'name', check_installed: 'name',
+  read_file: 'name', write_file: 'name', write_tmp_file: 'name', check_installed: 'name',
   search_web: 'query', search_github: 'query', search_steam: 'query', search_youtube: 'query',
   read_webpage: 'url', list_python_packages: 'names',
 };
@@ -59,6 +59,22 @@ function stripToolCalls(text) {
   const open = out.indexOf('<tool_call>');
   if (open >= 0) out = out.slice(0, open);
   return out.trim();
+}
+
+// Show each <time datetime> under `root` in the browser's local time.
+function fillTimes(root) {
+  root.querySelectorAll('time.msg-time').forEach((t) => {
+    const d = new Date(t.dateTime);
+    if (!isNaN(d)) t.textContent = d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  });
+}
+
+// A timestamp element for "now", already filled in.
+function timeEl(extraClass) {
+  const t = el('time', 'msg-time' + (extraClass ? ' ' + extraClass : ''));
+  t.dateTime = new Date().toISOString();
+  t.textContent = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  return t;
 }
 
 function richInto(node, text) {
@@ -172,7 +188,7 @@ function connectChat(conversationId) {
     stream = null;
     if (s.raf) cancelAnimationFrame(s.raf);
     const visible = stripToolCalls(s.text);
-    if (keep && visible) richInto(s.div, visible);
+    if (keep && visible) { richInto(s.div, visible); s.div.after(timeEl('assistant-time')); }
     else s.div.remove();
   }
   function pushReasoning(tok) {
@@ -373,6 +389,7 @@ function connectChat(conversationId) {
           const div = el('div', 'msg assistant md');
           richInto(div, data.content);
           log.appendChild(div);
+          log.appendChild(timeEl('assistant-time'));
           log.scrollTop = log.scrollHeight;
         }
         return;
@@ -406,6 +423,7 @@ function connectChat(conversationId) {
     richInto(node, node.textContent);
     node.removeAttribute('data-md');
   });
+  fillTimes(log);
   log.scrollTop = log.scrollHeight;
 
   log.addEventListener('click', (e) => {
@@ -434,6 +452,8 @@ function connectChat(conversationId) {
         files.forEach((f) => box.appendChild(fileChip(f)));
         div.appendChild(box);
       }
+      const t = timeEl();
+      div.appendChild(t);
       log.appendChild(div);
     });
     log.scrollTop = log.scrollHeight;

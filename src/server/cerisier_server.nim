@@ -50,6 +50,7 @@ when isMainModule:
   app.post("/chat/{id}/upload", uploadPost)
   app.get("/files/{fid}", fileGet)
   app.get("/history", historyPage)
+  app.post("/history/delete", historyDeletePost)
   app.get("/models", modelsPage)
   app.post("/models/load", modelsLoadPost)
   app.post("/models/unload", modelsUnloadPost)

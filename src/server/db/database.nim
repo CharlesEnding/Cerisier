@@ -136,6 +136,24 @@ proc listConversations*(db: Database): seq[(int64, string, string)] =
   for row in db.conn.fastRows(sql"SELECT id, title, created_at FROM agent_conversations ORDER BY id DESC"):
     result.add((parseBiggestInt(row[0]).int64, row[1], row[2]))
 
+proc deleteConversation*(db: Database, conversationId: int64) =
+  ## Children first: foreign keys are enforced.
+  db.conn.exec(sql"BEGIN")
+  try:
+    db.conn.exec(sql"""DELETE FROM tool_calls WHERE message_id IN
+        (SELECT id FROM agent_messages WHERE conversation_id = ?)""", conversationId)
+    db.conn.exec(sql"""DELETE FROM llama_turns WHERE session_id IN
+        (SELECT id FROM llama_sessions WHERE agent_conversation_id = ?)""", conversationId)
+    db.conn.exec(sql"DELETE FROM llama_sessions WHERE agent_conversation_id = ?", conversationId)
+    db.conn.exec(sql"DELETE FROM files WHERE conversation_id = ?", conversationId)
+    db.conn.exec(sql"DELETE FROM todos WHERE conversation_id = ?", conversationId)
+    db.conn.exec(sql"DELETE FROM agent_messages WHERE conversation_id = ?", conversationId)
+    db.conn.exec(sql"DELETE FROM agent_conversations WHERE id = ?", conversationId)
+    db.conn.exec(sql"COMMIT")
+  except CatchableError:
+    db.conn.exec(sql"ROLLBACK")
+    raise
+
 proc getConversationTitle*(db: Database, conversationId: int64): string =
   for row in db.conn.fastRows(sql"SELECT title FROM agent_conversations WHERE id = ?", conversationId):
     return row[0]

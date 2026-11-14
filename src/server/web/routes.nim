@@ -2,7 +2,7 @@
 ## Every page is a normal server-rendered full page load, except the chat
 ## page's WebSocket channel which live-updates in place.
 
-import std/[asyncdispatch, json, strformat, options, strutils, tables, sequtils, deques]
+import std/[asyncdispatch, json, strformat, options, strutils, tables, sequtils, deques, os]
 import prologue
 import prologue/websocket
 import ./layout
@@ -133,7 +133,7 @@ proc resultFileChipHtml(resultContent: string): string =
 const toolTargetArg = {
   "read_local_file": "path", "write_local_file": "path", "replace_text": "path",
   "list_dir": "path", "render_tree": "path", "search_files": "path",
-  "read_file": "name", "write_file": "name", "check_installed": "name",
+  "read_file": "name", "write_file": "name", "write_tmp_file": "name", "check_installed": "name",
   "search_web": "query", "search_github": "query", "search_steam": "query",
   "search_youtube": "query", "read_webpage": "url",
   "list_python_packages": "names"}.toTable
@@ -168,6 +168,13 @@ proc toolCallHtml(call: ParsedToolCall, resultContent: string): string =
     "</summary><pre>" & escapeHtml(call.argsJson) & "</pre><pre>" & escapeHtml(resultContent) &
     "</pre></details>\n"
 
+proc timeHtml(createdAt: string, extraClass = ""): string =
+  ## created_at is UTC; app.js shows it in the browser's local time.
+  if createdAt.len == 0:
+    return ""
+  let iso = createdAt.replace(' ', 'T') & "Z"
+  "<time class=\"msg-time " & extraClass & "\" datetime=\"" & escapeAttr(iso) & "\"></time>"
+
 proc renderMessageList(s: AppState, msgs: seq[MsgRow], children: Table[int64, seq[MsgRow]]): string {.gcsafe.}
 
 proc renderSubAgent(s: AppState, root: MsgRow, children: Table[int64, seq[MsgRow]],
@@ -198,7 +205,7 @@ proc renderMessageList(s: AppState, msgs: seq[MsgRow], children: Table[int64, se
   result = ""
   var i = 0
   while i < msgs.len:
-    let (id, _, role, content, _) = msgs[i]
+    let (id, _, role, content, createdAt) = msgs[i]
     if role == "reasoning":
       result.add("<details class=\"reasoning\"><summary>Reasoning</summary><div>" & escapeHtml(content) & "</div></details>\n")
       inc i
@@ -206,7 +213,8 @@ proc renderMessageList(s: AppState, msgs: seq[MsgRow], children: Table[int64, se
       let calls = parseToolCalls(content, s.toolRegistry)
       let visible = stripToolCalls(content)
       if visible.len > 0:
-        result.add("<div class=\"msg assistant md\" data-md>" & escapeHtml(visible) & "</div>\n")
+        result.add("<div class=\"msg assistant md\" data-md>" & escapeHtml(visible) & "</div>\n" &
+          timeHtml(createdAt, "assistant-time"))
       inc i
       var subRoots: seq[MsgRow] = @[]
       if children.hasKey(id):
@@ -229,7 +237,7 @@ proc renderMessageList(s: AppState, msgs: seq[MsgRow], children: Table[int64, se
           result.add(resultFileChipHtml(resultContent))
     elif role == "user":
       result.add("<div class=\"msg user\">" & escapeHtml(content) &
-        attachmentsHtml(s.db.listFilesForMessage(id)) & "</div>\n")
+        attachmentsHtml(s.db.listFilesForMessage(id)) & timeHtml(createdAt) & "</div>\n")
       inc i
     else:
       result.add("<div class=\"msg " & role & "\">" & escapeHtml(content) & "</div>\n")
@@ -346,9 +354,22 @@ proc historyPage*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
   var rows = ""
   for (id, title, createdAt) in s.db.listConversations():
-    rows.add(&"<tr><td><a href=\"/chat/{id}\">{escapeHtml(title)}</a></td><td>{createdAt}</td></tr>\n")
-  let body = &"<h1>History</h1><table><tr><th>Title</th><th>Created</th></tr>{rows}</table>"
+    rows.add(&"""<tr><td><a href="/chat/{id}">{escapeHtml(title)}</a></td><td>{createdAt}</td>
+      <td><form class="inline" method="post" action="/history/delete" onsubmit="return confirm('Delete this conversation and its files? This cannot be undone.')"><input type="hidden" name="id" value="{id}"><button>Delete</button></form></td></tr>
+""")
+  let body = &"<h1>History</h1><table><tr><th>Title</th><th>Created</th><th></th></tr>{rows}</table>"
   resp htmlResponse(page("History", "/history", body))
+
+proc historyDeletePost*(ctx: Context) {.async, gcsafe.} =
+  let s = getState()
+  try:
+    let id = parseBiggestInt(ctx.getFormParams("id")).int64
+    logInfo("routes", "POST /history/delete " & $id)
+    s.db.deleteConversation(id)
+    removeDir(convDir(s.dataDir, id))
+  except ValueError:
+    discard
+  resp redirect("/history")
 
 # ---------------- Models ----------------
 
