@@ -1,0 +1,49 @@
+{
+  "name": "screenshot",
+  "description": "Capture a screenshot on the local X11 desktop: the full screen, a single window (by title substring or window id), or a list of currently open windows. Uses ImageMagick's `import` when available, otherwise ffmpeg's x11grab.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/screenshot.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "mode": {
+        "type": "string",
+        "description": "What to capture: 'full' (whole screen, default), 'window' (one window), or 'list' (enumerate open windows without capturing)."
+      },
+      "window": {
+        "type": "string",
+        "description": "For mode 'window': a window title substring (matched with xdotool) or a window id (decimal, or hex like 0x1a00004)."
+      },
+      "output_path": {
+        "type": "string",
+        "description": "File to write. Optional for 'full' and 'window'; defaults to screenshot_<timestamp>.<ext> in the current working directory."
+      },
+      "format": {
+        "type": "string",
+        "description": "Output format: png (default), jpg, or webp. Overrides the output_path extension when given."
+      },
+      "quality": {
+        "type": "integer",
+        "description": "JPEG/WEBP quality (1-100, default 95). Ignored for PNG."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "mode": { "type": "string" },
+      "output_path": { "type": "string" },
+      "format": { "type": "string" },
+      "width": { "type": "integer" },
+      "height": { "type": "integer" },
+      "window": { "type": "string" },
+      "backend": { "type": "string" },
+      "windows": { "type": "array" }
+    }
+  },
+  "timeout_ms": 12000,
+  "permission": "ask",
+  "path_args": [
+    "output_path"
+  ]
+}

@@ -30,7 +30,7 @@ function el(tag, cls, text) {
 const TOOL_TARGET_ARG = {
   read_local_file: 'path', write_local_file: 'path', replace_text: 'path',
   list_dir: 'path', render_tree: 'path', search_files: 'path',
-  read_file: 'name', write_file: 'name', write_tmp_file: 'name', check_installed: 'name',
+  read_file: 'name', write_file: 'name', check_installed: 'name',
   search_web: 'query', search_github: 'query', search_steam: 'query', search_youtube: 'query',
   read_webpage: 'url', list_python_packages: 'names',
 };
@@ -43,89 +43,6 @@ function toolTarget(name, argsJson) {
     if (Array.isArray(p)) return p.length ? ' ' + p.join(', ') : '';
     return typeof p === 'string' && p ? ' ' + p : '';
   } catch (_) { return ''; }
-}
-
-// ---------------------------------------------------------------- diff view
-// Coloured line-level diff for replace_text, shown in place of the raw JSON
-// args. Deletions use the same palette as rich.js (tok-del / tok-add).
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-function lineDiff(oldText, newText) {
-  const a = oldText.split('\n'), b = newText.split('\n');
-  const n = a.length, m = b.length;
-  // LCS table, then walk it to emit keep/add/del operations.
-  const dp = new Array(n + 1);
-  for (let i = 0; i <= n; i++) dp[i] = new Uint32Array(m + 1);
-  for (let i = n - 1; i >= 0; i--)
-    for (let j = m - 1; j >= 0; j--)
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const ops = [];
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { ops.push({ op: ' ', t: a[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ op: '-', t: a[i] }); i++; }
-    else { ops.push({ op: '+', t: b[j] }); j++; }
-  }
-  while (i < n) { ops.push({ op: '-', t: a[i++] }); }
-  while (j < m) { ops.push({ op: '+', t: b[j++] }); }
-  return ops;
-}
-
-// Unified-style context: mark every changed line plus CTX lines either side,
-// then collapse runs of unmarked lines into a single gap marker. Same idea as
-// git diff --unified.
-function diffBodyHtml(ops) {
-  const CTX = 2;
-  const keep = new Array(ops.length).fill(false);
-  for (let k = 0; k < ops.length; k++) {
-    if (ops[k].op === ' ') continue;
-    const lo = Math.max(0, k - CTX), hi = Math.min(ops.length, k + CTX + 1);
-    for (let u = lo; u < hi; u++) keep[u] = true;
-  }
-  let html = '', gaps = 0;
-  for (let k = 0; k < ops.length; k++) {
-    if (!keep[k]) { gaps++; continue; }
-    if (gaps > 0) { html += diffGap(gaps); gaps = 0; }
-    const o = ops[k];
-    html += '<span class="drow d' + (o.op === ' ' ? 'ctx' : o.op) + '">' + o.op + escapeHtml(o.t) + '</span>';
-  }
-  if (gaps > 0) html += diffGap(gaps);
-  return html;
-}
-
-function diffGap(skipped) {
-  return '<span class="drow dgap">' + skipped + ' unchanged line' + (skipped === 1 ? '' : 's') + '</span>';
-}
-
-// Build the coloured diff for a replace_text call, or '' if it can't be shown
-// (not replace_text, args unparseable, nothing changed, or too big to diff --
-// in all those cases the caller falls back to the raw JSON args).
-function toolDiffHtml(name, argsJson) {
-  if (name !== 'replace_text') return '';
-  try {
-    const p = JSON.parse(argsJson || '{}');
-    if (typeof p.old !== 'string' || typeof p.new !== 'string' || p.old === p.new) return '';
-    if (p.old.length * p.new.length > 2500000) return ''; // quadratic guard
-    const ops = lineDiff(p.old, p.new);
-    const body = diffBodyHtml(ops);
-    if (!body) return '';
-    let meta = '';
-    if (typeof p.count === 'number') meta = ' · ' + p.count + ' replacement' + (p.count === 1 ? '' : 's');
-    const head = '<div class="tdiff-head"><span class="tdiff-path">' + escapeHtml(p.path || '') +
-      '</span><span class="tdiff-meta">' + meta + '</span></div>';
-    return '<div class="tool-diff">' + head + '<div class="tdiff-body">' + body + '</div></div>';
-  } catch (_) { return ''; }
-}
-
-// The body of a tool-call card: a diff block for replace_text, else the JSON.
-function toolCallBody(name, argsJson) {
-  const d = toolDiffHtml(name, argsJson);
-  if (!d) return el('pre', '', argsJson);
-  const w = el('div', '');
-  w.innerHTML = d;
-  return w;
 }
 
 function humanSize(n) {
@@ -142,22 +59,6 @@ function stripToolCalls(text) {
   const open = out.indexOf('<tool_call>');
   if (open >= 0) out = out.slice(0, open);
   return out.trim();
-}
-
-// Show each <time datetime> under `root` in the browser's local time.
-function fillTimes(root) {
-  root.querySelectorAll('time.msg-time').forEach((t) => {
-    const d = new Date(t.dateTime);
-    if (!isNaN(d)) t.textContent = d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-  });
-}
-
-// A timestamp element for "now", already filled in.
-function timeEl(extraClass) {
-  const t = el('time', 'msg-time' + (extraClass ? ' ' + extraClass : ''));
-  t.dateTime = new Date().toISOString();
-  t.textContent = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-  return t;
 }
 
 function richInto(node, text) {
@@ -271,7 +172,7 @@ function connectChat(conversationId) {
     stream = null;
     if (s.raf) cancelAnimationFrame(s.raf);
     const visible = stripToolCalls(s.text);
-    if (keep && visible) { richInto(s.div, visible); s.div.after(timeEl('assistant-time')); }
+    if (keep && visible) richInto(s.div, visible);
     else s.div.remove();
   }
   function pushReasoning(tok) {
@@ -339,7 +240,7 @@ function connectChat(conversationId) {
     details.open = true;
     details.dataset.toolCallId = data.id;
     details.appendChild(el('summary', '', `Tool call: ${data.name}${toolTarget(data.name, data.args)}`));
-    details.appendChild(toolCallBody(data.name, data.args));
+    details.appendChild(el('pre', '', data.args));
     const btns = el('div', 'tool-call-actions');
     const mkBtn = (label, msgType, always) => {
       const b = el('button', '', label);
@@ -370,7 +271,7 @@ function connectChat(conversationId) {
     if (existing) existing.remove();
     const details = el('details', 'tool-call result ' + data.status);
     details.appendChild(el('summary', '', `Tool call${data.name ? ': ' + data.name + toolTarget(data.name, data.args) : ''} (${data.status})`));
-    if (data.args) details.appendChild(toolCallBody(data.name, data.args));
+    if (data.args) details.appendChild(el('pre', '', data.args));
     // Capture structured search results so the assistant's reply can render
     // them as cards via a [[search:SOURCE]] directive instead of restating them.
     try {
@@ -472,7 +373,6 @@ function connectChat(conversationId) {
           const div = el('div', 'msg assistant md');
           richInto(div, data.content);
           log.appendChild(div);
-          log.appendChild(timeEl('assistant-time'));
           log.scrollTop = log.scrollHeight;
         }
         return;
@@ -502,20 +402,10 @@ function connectChat(conversationId) {
       }
     } catch (_) { /* not JSON */ }
   });
-  // Turn each server-rendered replace_text args block into a coloured diff.
-  // Runs after the search seeding above, which reads the last <pre>.
-  log.querySelectorAll('.tool-call[data-tool-name="replace_text"] > pre.tool-args').forEach((pre) => {
-    const d = toolDiffHtml('replace_text', pre.textContent);
-    if (!d) return;
-    const w = el('div', '');
-    w.innerHTML = d;
-    pre.replaceWith(w);
-  });
   log.querySelectorAll('[data-md]').forEach((node) => {
     richInto(node, node.textContent);
     node.removeAttribute('data-md');
   });
-  fillTimes(log);
   log.scrollTop = log.scrollHeight;
 
   log.addEventListener('click', (e) => {
@@ -544,8 +434,6 @@ function connectChat(conversationId) {
         files.forEach((f) => box.appendChild(fileChip(f)));
         div.appendChild(box);
       }
-      const t = timeEl();
-      div.appendChild(t);
       log.appendChild(div);
     });
     log.scrollTop = log.scrollHeight;

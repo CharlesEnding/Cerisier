@@ -47,20 +47,11 @@ proc buildHistory*(env: LoopEnv, convId: int64, visionOk: bool): seq[ChatMsg] =
   let sys = buildSystemPrompt(env.db, env.registry, convId, env.promptFile)
   if sys.len > 0:
     result.add(chatMsg("system", sys))
-  var rows: seq[(int64, string, string, string, string)] = @[]
-  var lastUser = -1
-  for row in env.db.messagesForConversation(convId):
-    if row[1].len == 0:
-      if row[2] == "user":
-        lastUser = rows.len
-      rows.add(row)
-  var pendingReasoning = ""
-  for i, (mid, parentId, role, msgContent, createdAt) in rows:
-    if role == "reasoning":
-      # The backend keeps every reasoning it is sent, so only the current turn's goes back.
-      if i > lastUser:
-        pendingReasoning.add(msgContent)
+  for (mid, parentId, role, msgContent, createdAt) in env.db.messagesForConversation(convId):
+    if parentId.len > 0:
       continue
+    if role == "reasoning":
+      continue ## not a valid chat-completions role; kept in the DB only for display
     if role == "user":
       let text = stamp(createdAt) & msgContent
       let att = describeAttachments(env.db, env.dataDir, mid, visionOk)
@@ -69,11 +60,7 @@ proc buildHistory*(env: LoopEnv, convId: int64, visionOk: bool): seq[ChatMsg] =
       else:
         result.add(chatMsg(role, text))
       continue
-    var msg = chatMsg(role, if role == "assistant": stamp(createdAt) & msgContent else: msgContent)
-    if role == "assistant":
-      msg.reasoning = pendingReasoning
-      pendingReasoning = ""
-    result.add(msg)
+    result.add(chatMsg(role, if role == "assistant": stamp(createdAt) & msgContent else: msgContent))
 
 proc runBuiltinCall(env: LoopEnv, convId, assistantMsgId: int64, hooks: AgentHooks,
                     toolName, argsJson: string): string =
@@ -136,7 +123,8 @@ proc runAgentTurn*(env: LoopEnv, convId: int64, sess: ChatSession,
   while true:
     let history = buildHistory(env, convId, sess.entry.images)
     result.history = history
-    logInfo("api", "sendTurn model=" & sess.model & " messages=" & $history.len)
+    logInfo("api", "sendTurn model=" & sess.model & " messages=" & $history.len &
+            " effort=" & (if sess.effort.len > 0: sess.effort else: sess.entry.reasoningEffort & " (model default)"))
     let onToken = proc(tok: string): Future[void] {.gcsafe.} =
       hooks.emit(%*{"type": "assistant_token", "content": tok})
       result = newFuture[void]("onToken")
