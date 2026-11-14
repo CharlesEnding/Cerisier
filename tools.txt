@@ -1,26 +1,27 @@
 * Read webpage
-* Web search
-* Github search
-* Steam search
-* PDF tools
-    * To text
-    * Merge
-    * Split
-    * Extract pages
-    * Extract images
+* Search w/ embedded result
+    * Web
+    * Github
+    * Steam
+    * Youtube
 * FFMPEg Wrapper for common operations
     * Extract frames
     * Compile frames into video
     * Extract audio
+    * Trim
+    * Crop timerange
 * Database interface (is that just SQL?)
-* Form generator (PDF)
-
 * Date & time
 * User context (who is he, where does he live, what does he want, ...)
 * Screenshot
-* File search (structured grep/find) 
+* File search (structured grep/find)
 * File tree
 * Image tools
     * OCR
 * Image generation
 * Fetch emails
+* Tools that we allow us to reduce user asks:
+    * List files tool (don't need to ask about running ls)
+    * List installed python packages
+    * Check if program is installed
+    * Show dev machine config (ubuntu version, free space, RAM, drives, ...)

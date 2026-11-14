@@ -1,4 +1,6 @@
 
+-1. Stop LLM from using cat over its file reading tool.
+-1. Make certain tool calls not require permission.
 0. Tool system improvement
 1. Add context used so far.
 2. Add a system prompt page with editable prompt.

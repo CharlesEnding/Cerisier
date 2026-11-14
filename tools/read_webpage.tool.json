@@ -1,0 +1,56 @@
+{
+  "name": "read_webpage",
+  "description": "Fetch a web page and extract its readable content (title, text/markdown/html/raw). Optionally scope to a CSS selector, strip boilerplate, or write to a file. No sandboxing.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/read_webpage.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["url"],
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "Absolute http/https URL to fetch (redirects are followed)."
+      },
+      "output_path": {
+        "type": "string",
+        "description": "If given, write extracted content to this file and return only metadata, not the text."
+      },
+      "format": {
+        "type": "string",
+        "description": "Output format: text|markdown|html|raw (default markdown)."
+      },
+      "selector": {
+        "type": "string",
+        "description": "Optional CSS selector to scope extraction to a single element."
+      },
+      "max_chars": {
+        "type": "integer",
+        "description": "Truncate extracted content to this many characters."
+      },
+      "strip_boilerplate": {
+        "type": "boolean",
+        "description": "Remove nav/footer/aside/header/form for a reader view (default true). Ignored when selector is set."
+      },
+      "timeout": {
+        "type": "number",
+        "description": "Request timeout in seconds (default 20)."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["title", "status_code", "content_type", "characters", "truncated", "content"],
+    "properties": {
+      "title": {"type": "string"},
+      "status_code": {"type": "integer"},
+      "content_type": {"type": "string"},
+      "characters": {"type": "integer"},
+      "truncated": {"type": "boolean"},
+      "content": {"type": "string"},
+      "selector_found": {"type": "boolean"},
+      "output_path": {"type": "string"}
+    }
+  },
+  "timeout_ms": 45000,
+  "permission": "ask"
+}
