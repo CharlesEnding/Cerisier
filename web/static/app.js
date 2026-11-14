@@ -13,6 +13,19 @@ function el(tag, cls, text) {
   return e;
 }
 
+// Flash the tab icon while any tool call awaits approval.
+(function () {
+  const link = document.querySelector('link[rel~="icon"]');
+  if (!link) return;
+  const icons = ['/static/favicon.png', '/static/favicon-alert.png'];
+  let tick = 0;
+  setInterval(() => {
+    const pending = document.querySelector('.tool-call.pending');
+    const want = pending ? icons[tick++ % 2] : icons[0];
+    if (!pending) tick = 0;
+    if (!link.href.endsWith(want)) link.href = want;
+  }, 600);
+})();
 // Tool name -> argument shown in the summary line.
 const TOOL_TARGET_ARG = {
   read_local_file: 'path', write_local_file: 'path', replace_text: 'path',

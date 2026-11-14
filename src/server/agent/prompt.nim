@@ -3,6 +3,7 @@
 ## the next turn without a rebuild). The template holds the static text; the
 ## parts that change are filled in here:
 ##   {{date}} {{os}}   current date, host OS
+##   {{system}}        host OS version, CPU, RAM, free disk, installed programs (sysinfo.nim)
 ##   {{tools}}         tool-call syntax plus external and built-in tool list
 ##   {{formats}}       what the chat UI can render (see formats.nim / rich.js)
 ##   {{todos}}         the conversation's todo list (main agent only)
@@ -16,6 +17,7 @@ import ../tools/registry
 import ../tools/builtin
 import ../files/files
 import ../log
+import ./sysinfo
 
 const
   maxFilesListed = 30
@@ -58,6 +60,7 @@ proc buildSystemPrompt*(db: Database, reg: ToolRegistry, convId: int64, promptFi
   vars["os"] = hostOS
   let wd = db.getConversationWorkingDir(convId)
   vars["working_dir"] = if wd.len > 0: wd else: "(none — tools run in the harness's own directory)"
+  vars["system"] = systemInfoText(wd)
 
   var tools = toolCallPreamble()
   tools.add("")

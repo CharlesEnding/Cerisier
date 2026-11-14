@@ -6,7 +6,7 @@ import prologue
 import ./config
 import ./db/database
 import ./api/[client, session]
-import ./agent/[conversation, loop]
+import ./agent/[conversation, loop, sysinfo]
 import ./tools/registry
 import ./tools/executor
 import ./web/routes
@@ -16,6 +16,7 @@ when isMainModule:
   let root = getAppDir().parentDir().parentDir() # src/server -> project root
   let cfg = config.loadConfig(root)
   ensureDirs(cfg)
+  initSystemInfo()
 
   let db = database.open(cfg.dbPath)
   db.migrate()
