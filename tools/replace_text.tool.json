@@ -1,0 +1,27 @@
+{
+  "name": "replace_text",
+  "description": "Replace exact occurrences of `old` with `new` in a file (read-modify-write). Refuses if `old` is empty or absent. count = number of replacements (default 1; -1 = all). Writes to disk, so it requires approval.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/replace_text.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["path", "old", "new"],
+    "properties": {
+      "path": {"type": "string"},
+      "old": {"type": "string", "description": "Exact substring to find (must not be empty)."},
+      "new": {"type": "string", "description": "Replacement text (may be empty to delete)."},
+      "count": {"type": "integer", "description": "Number of occurrences to replace (default 1; -1 = all)."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["path", "replaced", "total_occurrences"],
+    "properties": {
+      "path": {"type": "string"},
+      "replaced": {"type": "integer"},
+      "total_occurrences": {"type": "integer"}
+    }
+  },
+  "timeout_ms": 5000,
+  "permission": "ask"
+}

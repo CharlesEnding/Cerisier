@@ -1,0 +1,30 @@
+{
+  "name": "git_read",
+  "description": "Read-only git inspection: status, diff, log, show, branch. Invokes git with list args (no shell, no injection) and never modifies the repo. A non-zero exit_code means the git command failed; error text is in output.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/git_read.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["action"],
+    "properties": {
+      "action": {"type": "string", "enum": ["status", "diff", "log", "show", "branch"], "description": "Which read-only git command to run."},
+      "repo": {"type": "string", "description": "Repo directory (default '.')."},
+      "path": {"type": "string", "description": "Optional path restriction for diff/log."},
+      "ref": {"type": "string", "description": "Commit/ref to show (required for 'show')."},
+      "limit": {"type": "integer", "description": "Max log entries (default 20)."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["action", "repo", "output", "exit_code"],
+    "properties": {
+      "action": {"type": "string"},
+      "repo": {"type": "string"},
+      "output": {"type": "string"},
+      "exit_code": {"type": "integer"},
+      "truncated": {"type": "boolean"}
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "auto"
+}

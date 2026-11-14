@@ -13,11 +13,9 @@
 * Date & time
 * User context (who is he, where does he live, what does he want, ...)
 * Screenshot
-* File search (structured grep/find)
-* File tree
 * Image tools
     * OCR
 * Image generation
 * Fetch emails
 * Tools that we allow us to reduce user asks:
-    ...
+    * Read sandboxed (cwd concept)

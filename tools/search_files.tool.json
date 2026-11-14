@@ -1,0 +1,35 @@
+{
+  "name": "search_files",
+  "description": "Recursively search a path for a regex (or fixed string) and return matching lines as file:line text, or just the file list. Wraps grep; read-only.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/search_files.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["pattern"],
+    "properties": {
+      "pattern": {"type": "string", "description": "Regex to search for (set fixed=true for a literal string)."},
+      "path": {"type": "string", "description": "Directory or file to search (default '.')."},
+      "glob": {"type": "string", "description": "Glob to restrict files, e.g. '*.nim' or '*.py'."},
+      "ignore_case": {"type": "boolean", "description": "Case-insensitive match (default false)."},
+      "fixed": {"type": "boolean", "description": "Treat pattern as a literal string, not a regex (default false)."},
+      "context": {"type": "integer", "description": "Lines of context around each match (-C). Ignored when files_with_matches."},
+      "context_before": {"type": "integer", "description": "Lines of context before each match (-B)."},
+      "context_after": {"type": "integer", "description": "Lines of context after each match (-A)."},
+      "max_matches": {"type": "integer", "description": "Cap on output lines returned (default 200)."},
+      "files_with_matches": {"type": "boolean", "description": "Return only matching file paths, not lines (default false)."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["pattern", "path", "matches", "count", "truncated"],
+    "properties": {
+      "pattern": {"type": "string"},
+      "path": {"type": "string"},
+      "matches": {"type": "string"},
+      "count": {"type": "integer"},
+      "truncated": {"type": "boolean"}
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "auto"
+}

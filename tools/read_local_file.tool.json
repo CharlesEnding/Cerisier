@@ -1,13 +1,16 @@
 {
   "name": "read_local_file",
-  "description": "Read a file's contents from the given path. No sandboxing.",
+  "description": "Read a file's contents from the given path. Optionally read a byte range with offset/length, or prefix each returned line with its line number (line_numbers). No sandboxing.",
   "kind": "python",
   "entrypoint": "tools/scripts/read_local_file.py",
   "input_schema": {
     "type": "object",
     "required": ["path"],
     "properties": {
-      "path": {"type": "string"}
+      "path": {"type": "string"},
+      "offset": {"type": "integer", "description": "Byte offset to start reading from (default 0)."},
+      "length": {"type": "integer", "description": "Max bytes to read (default and cap 1048576)."},
+      "line_numbers": {"type": "boolean", "description": "Prefix each returned line with its 1-based line number (default false)."}
     }
   },
   "output_schema": {
