@@ -108,7 +108,7 @@ proc toolCallPreamble*(): seq[string] =
     "You have access to the following tools. To call one, emit exactly:",
     "<tool_call>\n<function=tool_name>\n<parameter=param_name>\nvalue\n</parameter>\n</function>\n</tool_call>",
     "Write string values as plain text, with no quotes or escaping. Write objects, arrays, numbers and booleans as JSON.",
-    "You may emit more than one in a single reply; each will be run and its result given back to you.",
+    "You may emit several in one reply: they run in order and you get all their results before your next reply. Batch independent calls (reads, searches, listings) this way instead of making one call per reply.",
   ]
 
 proc toolDescriptionLines*(reg: ToolRegistry, allow: seq[string] = @[]): seq[string] =

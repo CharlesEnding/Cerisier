@@ -3,8 +3,44 @@
 (read-modify-write). Refuses if `old` is empty or absent so an accidental
 no-op or a wrong find never silently writes. Writes to disk, so this tool is
 `permission: ask` by design."""
+import difflib
 import json
 import sys
+
+
+def closest_hint(content, old):
+    """Locate the file region most similar to `old` and describe how it differs."""
+    lines = content.split("\n")
+    olines = old.split("\n")
+    n = len(olines)
+    target = [l.strip() for l in olines]
+    stripped = [l.strip() for l in lines]
+    starts = range(max(1, len(lines) - n + 1))
+    # Cheap line-equality pass narrows the windows before the costlier character comparison.
+    scores = [sum(a == b for a, b in zip(target, stripped[i:i + n])) for i in starts]
+    top = max(scores)
+    candidates = [i for i in starts if scores[i] == top] if top > 0 else list(starts)
+    sm = difflib.SequenceMatcher(None, autojunk=False)
+    sm.set_seq2("\n".join(target))
+    best, best_i = 0.0, -1
+    for i in candidates:
+        sm.set_seq1("\n".join(stripped[i:i + n]))
+        if sm.real_quick_ratio() <= best or sm.quick_ratio() <= best:
+            continue
+        r = sm.ratio()
+        if r > best:
+            best, best_i = r, i
+    if best_i < 0 or best < 0.6:
+        return ""
+    a, b = best_i + 1, min(best_i + n, len(lines))
+    where = f"line {a}" if a == b else f"lines {a}-{b}"
+    if best == 1.0:
+        return f" {where.capitalize()} match except for whitespace or indentation; copy them exactly."
+    diff = list(difflib.unified_diff(olines, lines[best_i:best_i + n], n=1, lineterm=""))[2:]
+    if len(diff) > 40:
+        diff = diff[:40] + ["..."]
+    return (f" Closest match is {where} ({int(best * 100)}% similar). "
+            "Diff from your old (-) to the file (+):\n" + "\n".join(diff))
 
 
 def main():
@@ -43,7 +79,8 @@ def main():
 
     total = content.count(old)
     if total == 0:
-        print(json.dumps({"ok": False, "error": f"'old' not found in {path}"}))
+        hint = closest_hint(content, old)
+        print(json.dumps({"ok": False, "error": f"'old' not found in {path}.{hint}"}))
         return
 
     if count == -1:

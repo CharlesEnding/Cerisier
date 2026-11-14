@@ -105,7 +105,9 @@ proc runSubAgent*(env: SubAgentEnv, task, context: string, allow: seq[string]): 
         break
 
       let assistantMsgId = db.addMessage(env.convId, some(rootId), "assistant", reply.content)
-      history.add(chatMsg("assistant", reply.content))
+      var asst = chatMsg("assistant", reply.content)
+      asst.reasoning = reply.reasoning
+      history.add(asst)
 
       for call in calls:
         var resultJson = ""

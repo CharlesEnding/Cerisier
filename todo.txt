@@ -10,7 +10,6 @@
 13. Different subagent types with different permissions and launch permissions:
     thinking agent with no command -> automatic launch, subagent launch should take a reasoning effort
 14. Command summary. A command tool call should explain what it does and whether it's safe.
-17. Replace tool call should have a diff maybe, better formatting or something
 
 * Fix bing search (adversarial garbage data return, choose another provider)
 Priority:

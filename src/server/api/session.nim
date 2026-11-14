@@ -56,6 +56,7 @@ type
     role*: string
     content*: string
     images*: seq[string]
+    reasoning*: string ## sent as `reasoning_content` on assistant messages
 
 proc chatMsg*(role, content: string, images: seq[string] = @[]): ChatMsg =
   ChatMsg(role: role, content: content, images: images)
@@ -68,14 +69,18 @@ proc toChatMsgs*(messages: seq[(string, string)]): seq[ChatMsg] =
 proc buildChatRequest(entry: ModelEntry, effort: string, messages: seq[ChatMsg], stream: bool): JsonNode =
   var msgs = newJArray()
   for m in messages:
+    var msg: JsonNode
     if m.images.len == 0:
-      msgs.add(%*{"role": m.role, "content": m.content})
+      msg = %*{"role": m.role, "content": m.content}
     else:
       var parts = newJArray()
       parts.add(%*{"type": "text", "text": m.content})
       for img in m.images:
         parts.add(%*{"type": "image_url", "image_url": {"url": img}})
-      msgs.add(%*{"role": m.role, "content": parts})
+      msg = %*{"role": m.role, "content": parts}
+    if m.reasoning.len > 0:
+      msg["reasoning_content"] = %m.reasoning
+    msgs.add(msg)
   result = %*{"model": entry.name, "messages": msgs, "stream": stream}
   if stream:
     result["stream_options"] = %*{"include_usage": true}
