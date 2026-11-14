@@ -1,14 +1,10 @@
--1. Make python package tool take multiple package search instad of a single one, also add option to return all packages
--1. Stop LLM from using cat over its file reading tool.
 -1. Make LLM batch the commands if they're not sequentially related (output of one needed for the other)
 0. Tool system improvement
-1. Add a time to messages, time it was sent and time it took
 2. Add a system prompt page with editable prompt.
 3. Writing files to /tmp shouldn't require approval, and agents and subagents should write any files they need to write over there. Each agent should have its own working directory actually.
 4. "Ask for help tool call that takes in an answer."
 5. Fix loops
 7. Tool & skill marketplace
-8. Add date & time & location tools
 9. Adaptive reasoning effort (the agent chooses it himself)
 10. Add folder awareness and foldable file panel
 11. Mixed tool call -> Zed + Cerisier rather than alternatives. We need to be able to spawn subagent but also read and modify files using Zed's tools.
@@ -16,5 +12,25 @@
 13. Different subagent types with different permissions and launch permissions:
     thinking agent with no command -> automatic launch
 14. Command summary. A command tool call should explain what it does and whether it's safe.
-15. Add important installed programs & versions to system prompt as well as computer info (ubuntu version, RAM, etc...)
-    {"command":"which convert magick ffmpeg identify imagemagick 2>/dev/null; dpkg -l 2>/dev/null | grep -i imagemagick; python3 -c \"import PIL; print(PIL.__version__)\" 2>/dev/null; pip3 list 2>/dev/null | grep -i pillow"}
+15. Add conversation delete button with confirmation in history page
+Easy:
+* Add important installed programs & versions to system prompt as well as computer info (ubuntu version, RAM, etc...)
+    Example of commands that should have been this tool:
+      {"command":"which convert magick ffmpeg identify imagemagick 2>/dev/null; dpkg -l 2>/dev/null | grep -i imagemagick; }
+* Add flashing favicon when user approval is pending
+* Fix search file tool which seems to be ineffective
+  ```
+  Tool call: search_files (succeeded)
+
+  {"pattern":":hover|results-list|target","path":"/persistent/Cerisier/web/static/style.css","max_matches":30}
+
+  {"ok":true,"data":{"pattern":":hover|results-list|target","path":"/persistent/Cerisier/web/static/style.css","matches":"","count":0,"truncated":false}}
+  ```
+  This fails but should succeed. It should wrap sed, find, cat, grep with an intuitive interface for the LLM.
+  Look up the conversation titled "Search tool embed implementation" for examples of grep and seds and other commands that should have been this tool called.
+* Write and read tools should have path embedded in header/summary
+* Add date & time & location tools
+* Add a time to messages and include it as part of context to further messages
+* Stop LLM from using cat over its file reading tool.
+* Make python package tool take multiple package search instad of a single one, also add option to return all packages
+* Make him stop using cat, sed, grep

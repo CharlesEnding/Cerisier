@@ -240,6 +240,13 @@ function connectChat(conversationId) {
     const details = el('details', 'tool-call result ' + data.status);
     details.appendChild(el('summary', '', `Tool call${data.name ? ': ' + data.name : ''} (${data.status})`));
     if (data.args) details.appendChild(el('pre', '', data.args));
+    // Capture structured search results so the assistant's reply can render
+    // them as cards via a [[search:SOURCE]] directive instead of restating them.
+    try {
+      const parsed = JSON.parse(data.result || '{}');
+      const d = parsed && parsed.ok === true ? parsed.data : null;
+      if (d && d.type === 'search' && d.source) window.CERISIER_SEARCH_RESULTS[d.source] = d;
+    } catch (_) { /* not JSON */ }
     details.appendChild(el('pre', '', data.result || ''));
     parent.appendChild(details);
     // Files produced by a tool (write_file) get a download chip.
@@ -349,6 +356,20 @@ function connectChat(conversationId) {
   };
 
   // ---- initial history render ------------------------------------------
+  // On reload the live capture map is empty; seed it from the raw JSON that the
+  // server already rendered inside each tool-result <pre> so [[search:SOURCE]]
+  // directives in the assistant's reply expand into cards.
+  log.querySelectorAll('.tool-call').forEach((d) => {
+    const pres = d.querySelectorAll('pre');
+    const res = pres.length ? pres[pres.length - 1].textContent : '';
+    try {
+      const p = JSON.parse(res);
+      const data = p && p.ok === true ? p.data : null;
+      if (data && data.type === 'search' && data.source) {
+        window.CERISIER_SEARCH_RESULTS[data.source] = data;
+      }
+    } catch (_) { /* not JSON */ }
+  });
   log.querySelectorAll('[data-md]').forEach((node) => {
     richInto(node, node.textContent);
     node.removeAttribute('data-md');

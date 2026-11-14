@@ -284,3 +284,77 @@ math { font-family: "Latin Modern Math", "STIX Two Math", "Cambria Math", "Noto 
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+/* ---------- search result embeds (search_web / github / steam / youtube) ---------- */
+.search-embed {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0.4rem 0;
+  background: var(--bg-panel);
+  overflow: hidden;
+}
+.search-embed-head {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.85rem;
+}
+.search-embed-icon { font-size: 1rem; line-height: 1; opacity: 0.85; }
+.search-embed-label { font-weight: 600; color: var(--fg); }
+.search-embed-query { color: var(--muted); font-style: italic; }
+.search-results { display: flex; flex-direction: column; }
+.search-embed-raw { margin: 0.3rem 0.8rem 0.5rem; font-size: 0.75rem; color: var(--muted); }
+.search-embed-raw summary { cursor: pointer; opacity: 0.7; }
+.search-embed-raw pre { max-height: 200px; overflow: auto; background: var(--code-bg); padding: 0.4rem 0.6rem; border-radius: 4px; white-space: pre-wrap; word-break: break-all; }
+
+.search-card {
+  display: flex; align-items: flex-start; gap: 0.7rem;
+  padding: 0.55rem 0.8rem;
+  text-decoration: none; color: var(--fg);
+  border-top: 1px solid var(--border);
+  transition: background 0.12s ease;
+}
+.search-card-static { cursor: default; }
+.search-results > .search-card:first-child { border-top: none; }
+.search-card:hover { background: rgba(110, 168, 254, 0.08); }
+.search-card-img {
+  flex: 0 0 auto; width: 120px; height: 70px;
+  border-radius: 5px; overflow: hidden; background: #000;
+  display: flex; align-items: center; justify-content: center;
+}
+.search-card-img img { width: 100%; height: 100%; object-fit: cover; }
+.search-card-img.avatar { width: 48px; height: 48px; border-radius: 50%; }
+.search-card-img.avatar img { object-fit: cover; }
+.search-card-img.steam { width: 130px; height: 74px; }
+.search-card-img.yt { width: 160px; height: 90px; }
+.search-card-body { flex: 1 1 auto; min-width: 0; }
+.search-card-title { font-size: 0.95rem; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
+.search-card:hover .search-card-title { color: var(--accent); }
+.search-card-url { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; margin-top: 0.15rem; }
+.search-card-snippet { font-size: 0.85rem; color: #c9c9c9; margin-top: 0.25rem; line-height: 1.35; overflow-wrap: anywhere; }
+.search-card-sub { font-size: 0.8rem; color: var(--muted); margin-top: 0.2rem; overflow-wrap: anywhere; }
+.search-card-meta { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; margin-top: 0.3rem; font-size: 0.78rem; color: #b8b8b8; }
+.search-sep { color: var(--muted); opacity: 0.5; }
+.search-badge {
+  padding: 0.1rem 0.45rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;
+  background: rgba(255, 255, 255, 0.08); color: var(--fg);
+}
+.search-badge.price { background: rgba(126, 231, 135, 0.15); color: #7ee787; }
+.search-badge.discount { background: rgba(224, 108, 117, 0.18); color: #ff9b9b; }
+.search-badge.num { background: rgba(110, 168, 254, 0.15); color: var(--accent); }
+.search-badge.open { background: rgba(126, 231, 135, 0.15); color: #7ee787; }
+.search-badge.closed { background: rgba(224, 108, 117, 0.18); color: #ff9b9b; }
+
+/* Source accent colours: a left bar so each kind looks distinct. */
+.search-embed { border-left: 3px solid var(--border); }
+.search-embed.source-web { border-left-color: #61afef; }
+.search-embed.source-github { border-left-color: #b3b3b3; }
+.search-embed.source-steam { border-left-color: #6699ff; }
+.search-embed.source-youtube { border-left-color: #e06c75; }
+@media (max-width: 640px) {
+  .search-card { flex-direction: column; gap: 0.4rem; }
+  .search-card-img, .search-card-img.yt, .search-card-img.steam { width: 100%; max-height: 90px; }
+  .search-card-img.avatar { width: 48px; height: 48px; }
+}
+

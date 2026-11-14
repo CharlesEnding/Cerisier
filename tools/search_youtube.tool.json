@@ -1,0 +1,30 @@
+{
+  "name": "search_youtube",
+  "description": "Search YouTube for videos and return them as rich embed cards (thumbnail, channel, views, duration).",
+  "kind": "python",
+  "entrypoint": "tools/scripts/search_youtube.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["query"],
+    "properties": {
+      "query": {"type": "string", "description": "Search terms."},
+      "max_results": {"type": "integer", "description": "Number of results to return (default 10, max 50)."},
+      "sort": {"type": "string", "description": "Sort order: relevance|newest|views (default relevance)."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["type", "source", "query", "results", "text"],
+    "properties": {
+      "type": {"type": "string"},
+      "source": {"type": "string"},
+      "query": {"type": "string"},
+      "results": {"type": "array", "items": {"type": "object"}},
+      "text": {"type": "string"},
+      "sort": {"type": "string"}
+    }
+  },
+  "timeout_ms": 30000,
+  "permission": "auto",
+  "path_args": []
+}

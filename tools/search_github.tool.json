@@ -1,0 +1,30 @@
+{
+  "name": "search_github",
+  "description": "Search GitHub for repositories, users or issues and return them as rich embed cards.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/search_github.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["query"],
+    "properties": {
+      "query": {"type": "string", "description": "Search terms (GitHub query syntax supported)."},
+      "max_results": {"type": "integer", "description": "Number of results to return (default 10, max 50)."},
+      "type": {"type": "string", "description": "What to search: repo|user|issue (default repo)."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["type", "source", "query", "results", "text"],
+    "properties": {
+      "type": {"type": "string"},
+      "source": {"type": "string"},
+      "query": {"type": "string"},
+      "results": {"type": "array", "items": {"type": "object"}},
+      "text": {"type": "string"},
+      "kind": {"type": "string"}
+    }
+  },
+  "timeout_ms": 30000,
+  "permission": "auto",
+  "path_args": []
+}

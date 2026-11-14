@@ -19,6 +19,9 @@ Current date: {{date}}. Host operating system: {{os}}. Working directory: {{work
 
 {{formats}}
 
+## Search result cards
+When a search tool (search_web, search_github, search_steam, search_youtube) runs, its results are already captured. To show them, put a standalone directive line in your reply with the tool's source name: `[[search:web]]`, `[[search:github]]`, `[[search:steam]]` or `[[search:youtube]]`. The UI expands that single line into rich result cards. Do not restate, paraphrase or list the individual results in prose — the cards carry the titles, links, images and details; a short sentence framing what you found, followed by the directive line, is enough. Put the directive on its own line (not inline in a sentence, not inside a code block).
+
 ## Using tools
 {{tools}}
 

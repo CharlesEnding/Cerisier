@@ -19,6 +19,100 @@
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /* ------------------------------------------------------------------ */
+/* Search result embeds: [[search:SOURCE]] is a block-level directive the      */
+/* model emits in its reply; it expands to cards built from the real tool      */
+/* result captured in window.CERISIER_SEARCH_RESULTS (set by app.js). The      */
+/* model never re-types the data, it just names the source.                    */
+/* ------------------------------------------------------------------ */
+window.CERISIER_SEARCH_RESULTS = window.CERISIER_SEARCH_RESULTS || {};
+function searchUrl(u) { return typeof u === 'string' && /^https?:\/\//i.test(u) ? u : null; }
+function searchImgHtml(src, alt, cls) {
+  const u = searchUrl(src);
+  return u ? `<img class="search-img${cls ? ' ' + cls : ''}" src="${u}" alt="${esc(alt || '')}" loading="lazy" onerror="this.remove()">` : '';
+}
+function searchBadge(text, cls) {
+  if (!text) return '';
+  return `<span class="search-badge${cls ? ' ' + cls : ''}">${esc(text)}</span>`;
+}
+function searchShortUrl(u) {
+  if (!u) return '';
+  try {
+    const url = new URL(u);
+    const host = url.hostname.replace(/^www\./, '');
+    let path = (url.pathname + url.search).replace(/\/$/, '');
+    if (path.length > 60) path = path.slice(0, 60) + '…';
+    return host + (path && path !== '/' ? path : '');
+  } catch (_) { return u.length > 80 ? u.slice(0, 80) + '…' : u; }
+}
+function searchMeta(source, data) {
+  switch (source) {
+    case 'web': return { icon: '🌐', label: 'Web results' };
+    case 'github': {
+      const kind = ((data || {}).kind || 'repo').toLowerCase();
+      return { icon: '⎈', label: 'GitHub · ' + ({ repo: 'Repositories', user: 'Users', issue: 'Issues' }[kind] || 'Results') };
+    }
+    case 'steam': return { icon: '🎮', label: 'Steam · Games' };
+    case 'youtube': return { icon: '▶', label: 'YouTube · Videos' };
+    default: return { icon: '🔎', label: 'Results' };
+  }
+}
+function searchCardHtml(source, r) {
+  const href = searchUrl(r.url);
+  const imgWrap = (cls) => `<div class="search-card-img${cls ? ' ' + cls : ''}">${searchImgHtml(r.image || r.avatar || r.thumbnail, r.name || r.title || r.login || '', '')}</div>`;
+  let inner = '';
+  if (source === 'web') {
+    inner = `<div class="search-card-body"><div class="search-card-title">${esc(r.title || '(untitled)')}</div>` +
+      (r.url ? `<div class="search-card-url">${esc(searchShortUrl(r.url))}</div>` : '') +
+      (r.snippet ? `<div class="search-card-snippet">${esc(r.snippet)}</div>` : '') + `</div>`;
+  } else if (source === 'github') {
+    const kind = (r.type || 'repo').toLowerCase();
+    if (kind === 'user') {
+      inner = imgWrap('avatar') + `<div class="search-card-body"><div class="search-card-title">${esc(r.name || r.login || '(user)')}</div><div class="search-card-url">${esc('@' + (r.login || ''))}</div></div>`;
+    } else if (kind === 'issue') {
+      inner = `<div class="search-card-body"><div class="search-card-title">${esc(r.title || '(issue)')}</div><div class="search-card-meta">` +
+        searchBadge('#' + (r.number || ''), 'num') + searchBadge(r.state, r.state === 'open' ? 'open' : 'closed') +
+        (r.repo ? `<span class="search-card-sub">${esc(r.repo)}</span>` : '') + `</div></div>`;
+    } else {
+      const bits = [];
+      if (r.stars != null) bits.push(esc('★ ' + r.stars));
+      if (r.language) bits.push(esc(r.language));
+      if (r.updated) bits.push(esc('updated ' + r.updated));
+      inner = imgWrap('avatar') + `<div class="search-card-body"><div class="search-card-title">${esc(r.name || '(repo)')}</div><div class="search-card-meta">${bits.join('<span class="search-sep">·</span>')}</div>` +
+        (r.description ? `<div class="search-card-snippet">${esc(r.description)}</div>` : '') + `</div>`;
+    }
+  } else if (source === 'steam') {
+    const bits = [];
+    if (r.price_text) bits.push(searchBadge(r.price_text, 'price'));
+    if (r.discount) bits.push(searchBadge(r.discount, 'discount'));
+    inner = imgWrap('steam') + `<div class="search-card-body"><div class="search-card-title">${esc(r.name || '(game)')}</div><div class="search-card-meta">${bits.join('')}</div>` +
+      (r.review_text ? `<div class="search-card-snippet">${esc(r.review_text)}</div>` : '') + `</div>`;
+  } else if (source === 'youtube') {
+    const bits = [];
+    if (r.duration) bits.push(esc(r.duration));
+    if (r.views) bits.push(esc(r.views));
+    if (r.published) bits.push(esc(r.published));
+    inner = imgWrap('yt') + `<div class="search-card-body"><div class="search-card-title">${esc(r.title || '(video)')}</div>` +
+      (r.channel ? `<div class="search-card-sub">${esc(r.channel)}</div>` : '') +
+      (bits.length ? `<div class="search-card-meta">${bits.join('<span class="search-sep">·</span>')}</div>` : '') + `</div>`;
+  } else {
+    inner = `<div class="search-card-body"><div class="search-card-title">${esc(r.title || r.name || '(result)')}</div></div>`;
+  }
+  const open = href ? `<a class="search-card" href="${href}" target="_blank" rel="noopener noreferrer">` : `<div class="search-card search-card-static">`;
+  const close = href ? '</a>' : '</div>';
+  return open + inner + close;
+}
+function searchCardsHtml(source) {
+  const store = window.CERISIER_SEARCH_RESULTS || {};
+  const data = store[source];
+  if (!data || !Array.isArray(data.results) || !data.results.length) return '';
+  const meta = searchMeta(source, data);
+  let cards = '';
+  for (const r of data.results) { if (r) cards += searchCardHtml(source, r); }
+  const q = data.query ? `<span class="search-embed-query">for "${esc(data.query)}"</span>` : '';
+  return `<div class="search-embed${source ? ' source-' + source : ''}"><div class="search-embed-head"><span class="search-embed-icon">${meta.icon}</span><span class="search-embed-label">${esc(meta.label)}</span>${q}</div><div class="search-results">${cards}</div></div>`;
+}
+
+/* ------------------------------------------------------------------ */
 /* Stash: park generated HTML behind opaque tokens so later regex      */
 /* passes (emphasis etc.) can't touch it.                              */
 /* ------------------------------------------------------------------ */
@@ -299,6 +393,7 @@ function inline(raw) {
 const reFence = /^(\s*)(`{3,}|~{3,})\s*([A-Za-z0-9_+#.\-]*)[^`]*$/;
 const reList = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
 const reHr = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/;
+const reSearch = /^\s*\[\[search:([\w-]+)\]\]\s*$/;
 const reTableSep = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 const reMathOpen = /^\s*(\$\$|\\\[)(.*)$/;
 
@@ -313,7 +408,7 @@ function splitRow(line) {
   return line.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
 }
 function startsBlock(line, next) {
-  if (reFence.test(line) || reMathOpen.test(line) || reHr.test(line) || reList.test(line)) return true;
+  if (reFence.test(line) || reMathOpen.test(line) || reHr.test(line) || reSearch.test(line) || reList.test(line)) return true;
   if (/^\s{0,3}(#{1,6}\s|>)/.test(line)) return true;
   if (line.indexOf('|') >= 0 && next !== undefined && next.indexOf('|') >= 0 && reTableSep.test(next)) return true;
   return false;
@@ -426,6 +521,8 @@ function renderBlocks(lines) {
       i++;
       continue;
     }
+    let sm = reSearch.exec(line);
+    if (sm) { out.push(searchCardsHtml(sm[1].toLowerCase())); i++; continue; }
     if (reHr.test(line)) { out.push('<hr>'); i++; continue; }
 
     if (/^\s{0,3}>/.test(line)) {
