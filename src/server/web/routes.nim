@@ -135,14 +135,20 @@ const toolTargetArg = {
   "list_dir": "path", "render_tree": "path", "search_files": "path",
   "read_file": "name", "write_file": "name", "check_installed": "name",
   "search_web": "query", "search_github": "query", "search_steam": "query",
-  "search_youtube": "query", "read_webpage": "url"}.toTable
+  "search_youtube": "query", "read_webpage": "url",
+  "list_python_packages": "names"}.toTable
 
 proc toolTarget(call: ParsedToolCall): string =
   ## The argument shown after the tool name in the summary line.
   if call.name notin toolTargetArg:
     return ""
   try:
-    let p = parseJson(call.argsJson){toolTargetArg[call.name]}.getStr()
+    let node = parseJson(call.argsJson){toolTargetArg[call.name]}
+    var p = node.getStr()
+    if node != nil and node.kind == JArray:
+      var parts: seq[string]
+      for e in node: parts.add(e.getStr())
+      p = parts.join(", ")
     if p.len > 0: return " " & p
   except CatchableError:
     discard

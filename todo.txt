@@ -21,9 +21,6 @@ Easy:
     Example of commands that should have been this tool:
       {"command":"which convert magick ffmpeg identify imagemagick 2>/dev/null; dpkg -l 2>/dev/null | grep -i imagemagick; }
 * Add flashing favicon when user approval is pending
-* Write and read tools should have path embedded in header/summary
 * Add date & time & location tools
 * Add a time to messages and include it as part of context to further messages
-* Stop LLM from using cat over its file reading tool.
 * Make python package tool take multiple package search instad of a single one, also add option to return all packages
-* Make him stop using cat, sed, grep

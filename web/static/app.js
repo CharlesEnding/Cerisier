@@ -19,7 +19,7 @@ const TOOL_TARGET_ARG = {
   list_dir: 'path', render_tree: 'path', search_files: 'path',
   read_file: 'name', write_file: 'name', check_installed: 'name',
   search_web: 'query', search_github: 'query', search_steam: 'query', search_youtube: 'query',
-  read_webpage: 'url',
+  read_webpage: 'url', list_python_packages: 'names',
 };
 
 function toolTarget(name, argsJson) {
@@ -27,6 +27,7 @@ function toolTarget(name, argsJson) {
   if (!key) return '';
   try {
     const p = JSON.parse(argsJson || '{}')[key];
+    if (Array.isArray(p)) return p.length ? ' ' + p.join(', ') : '';
     return typeof p === 'string' && p ? ' ' + p : '';
   } catch (_) { return ''; }
 }

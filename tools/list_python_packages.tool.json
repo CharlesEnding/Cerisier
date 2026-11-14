@@ -1,12 +1,13 @@
 {
   "name": "list_python_packages",
-  "description": "List installed Python packages (name + version) in-process via importlib.metadata. Optionally filter by a substring.",
+  "description": "List installed Python packages (name + version) in-process via importlib.metadata. Give `names` (several case-insensitive substrings, any match) or set `all` to true to list everything.",
   "kind": "python",
   "entrypoint": "tools/scripts/list_python_packages.py",
   "input_schema": {
     "type": "object",
     "properties": {
-      "contains": {"type": "string", "description": "Case-insensitive substring filter on package name."}
+      "names": {"type": "array", "items": {"type": "string"}, "description": "Case-insensitive substrings; a package is returned if its name contains any of them."},
+      "all": {"type": "boolean", "description": "Return every installed package (ignores names)."}
     }
   },
   "output_schema": {
@@ -15,6 +16,7 @@
     "properties": {
       "packages": {"type": "array", "items": {"type": "object", "required": ["name", "version"]}},
       "count": {"type": "integer"},
+      "not_found": {"type": "array", "items": {"type": "string"}},
       "truncated": {"type": "boolean"}
     }
   },
