@@ -1,0 +1,24 @@
+{
+  "name": "check_installed",
+  "description": "Check whether a program/command is installed on PATH (like `which <name>`) and report its path.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/check_installed.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["name"],
+    "properties": {
+      "name": {"type": "string", "description": "Program or command name to look up."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["name", "found", "path"],
+    "properties": {
+      "name": {"type": "string"},
+      "found": {"type": "boolean"},
+      "path": {"type": "string"}
+    }
+  },
+  "timeout_ms": 5000,
+  "permission": "auto"
+}

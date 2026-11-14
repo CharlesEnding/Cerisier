@@ -1,4 +1,3 @@
-* Read webpage
 * Search w/ embedded result
     * Web
     * Github
@@ -21,7 +20,4 @@
 * Image generation
 * Fetch emails
 * Tools that we allow us to reduce user asks:
-    * List files tool (don't need to ask about running ls)
-    * List installed python packages
-    * Check if program is installed
-    * Show dev machine config (ubuntu version, free space, RAM, drives, ...)
+    ...

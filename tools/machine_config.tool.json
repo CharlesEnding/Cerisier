@@ -1,0 +1,27 @@
+{
+  "name": "machine_config",
+  "description": "Report the dev machine's config: OS/version/codename, kernel, arch, CPU, RAM usage, per-mount disk usage, and uptime.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/machine_config.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {}
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["hostname", "os", "kernel", "cpu", "memory", "disk", "uptime"],
+    "properties": {
+      "hostname": {"type": "string"},
+      "os": {"type": "object"},
+      "kernel": {"type": "string"},
+      "arch": {"type": "string"},
+      "python_version": {"type": "string"},
+      "cpu": {"type": "object"},
+      "memory": {"type": "object"},
+      "disk": {"type": "array", "items": {"type": "object"}},
+      "uptime": {"type": "object"}
+    }
+  },
+  "timeout_ms": 5000,
+  "permission": "auto"
+}

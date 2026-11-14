@@ -1,6 +1,7 @@
 
 -1. Stop LLM from using cat over its file reading tool.
 -1. Make certain tool calls not require permission.
+-1. Make LLM batch the commands if they're not sequentially related (output of one needed for the other)
 0. Tool system improvement
 1. Add context used so far.
 2. Add a system prompt page with editable prompt.

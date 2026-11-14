@@ -1,0 +1,26 @@
+{
+  "name": "list_dir",
+  "description": "List the immediate entries of a directory (name, type, size) without needing run_command approval. Non-recursive.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/list_dir.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": {"type": "string", "description": "Directory to list (default '.')."},
+      "show_hidden": {"type": "boolean", "description": "Include dotfiles (default false)."},
+      "max_entries": {"type": "integer", "description": "Cap on entries returned (default 200)."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["path", "entries", "count", "truncated"],
+    "properties": {
+      "path": {"type": "string"},
+      "entries": {"type": "array", "items": {"type": "object", "required": ["name", "type", "size"]}},
+      "count": {"type": "integer"},
+      "truncated": {"type": "boolean"}
+    }
+  },
+  "timeout_ms": 5000,
+  "permission": "auto"
+}

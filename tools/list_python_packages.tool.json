@@ -1,0 +1,23 @@
+{
+  "name": "list_python_packages",
+  "description": "List installed Python packages (name + version) in-process via importlib.metadata. Optionally filter by a substring.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/list_python_packages.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "contains": {"type": "string", "description": "Case-insensitive substring filter on package name."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["packages", "count", "truncated"],
+    "properties": {
+      "packages": {"type": "array", "items": {"type": "object", "required": ["name", "version"]}},
+      "count": {"type": "integer"},
+      "truncated": {"type": "boolean"}
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "auto"
+}
