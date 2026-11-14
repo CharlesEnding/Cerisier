@@ -1,0 +1,34 @@
+{
+  "name": "pdf_to_text",
+  "description": "Extract text from a PDF into a plain-text file. Writes to a new output file.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/pdf_to_text.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["input_path", "output_path"],
+    "properties": {
+      "input_path": {"type": "string"},
+      "output_path": {"type": "string"},
+      "pages": {
+        "type": "string",
+        "description": "1-based range e.g. '1-3,5,7-9'. Omit for all pages."
+      },
+      "page_breaks": {
+        "type": "boolean",
+        "description": "Insert '--- page N ---' separators (default true)."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["output_path", "pages_extracted", "total_pages", "characters"],
+    "properties": {
+      "output_path": {"type": "string"},
+      "pages_extracted": {"type": "integer"},
+      "total_pages": {"type": "integer"},
+      "characters": {"type": "integer"}
+    }
+  },
+  "timeout_ms": 30000,
+  "permission": "ask"
+}

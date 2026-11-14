@@ -1,0 +1,29 @@
+{
+  "name": "pdf_merge",
+  "description": "Merge several PDFs into one output PDF.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/pdf_merge.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["input_paths", "output_path"],
+    "properties": {
+      "input_paths": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Input PDF paths, merged in this order."
+      },
+      "output_path": {"type": "string"}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["output_path", "pages", "files"],
+    "properties": {
+      "output_path": {"type": "string"},
+      "pages": {"type": "integer"},
+      "files": {"type": "integer"}
+    }
+  },
+  "timeout_ms": 30000,
+  "permission": "ask"
+}

@@ -1,0 +1,29 @@
+{
+  "name": "pdf_extract_pages",
+  "description": "Copy selected pages from a PDF into a new output PDF.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/pdf_extract_pages.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["input_path", "output_path", "pages"],
+    "properties": {
+      "input_path": {"type": "string"},
+      "output_path": {"type": "string"},
+      "pages": {
+        "type": "string",
+        "description": "1-based range e.g. '1-3,5,7-9'."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["output_path", "pages", "total_pages"],
+    "properties": {
+      "output_path": {"type": "string"},
+      "pages": {"type": "integer"},
+      "total_pages": {"type": "integer"}
+    }
+  },
+  "timeout_ms": 30000,
+  "permission": "ask"
+}

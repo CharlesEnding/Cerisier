@@ -1,0 +1,32 @@
+{
+  "name": "pdf_extract_images",
+  "description": "Extract embedded images from a PDF into PNG files in an output directory.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/pdf_extract_images.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["input_path", "output_dir"],
+    "properties": {
+      "input_path": {"type": "string"},
+      "output_dir": {"type": "string"},
+      "prefix": {
+        "type": "string",
+        "description": "Filename prefix (default 'img')."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["output_dir", "count", "files"],
+    "properties": {
+      "output_dir": {"type": "string"},
+      "count": {"type": "integer"},
+      "files": {
+        "type": "array",
+        "items": {"type": "string"}
+      }
+    }
+  },
+  "timeout_ms": 60000,
+  "permission": "ask"
+}

@@ -1,0 +1,31 @@
+{
+  "name": "pdf_form",
+  "description": "Generate a fillable PDF form (text, checkbox, choice, listbox fields plus static labels) from a field list. Writes to a new output file.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/pdf_form.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["output_path", "fields"],
+    "properties": {
+      "output_path": {"type": "string"},
+      "fields": {
+        "type": "array",
+        "items": {"type": "object"},
+        "description": "Field objects: {type: text|checkbox|choice|listbox|label, name, x, y, width, height, value, options, label}. Origin is bottom-left, in points."
+      },
+      "page_width": {"type": "integer", "description": "Page width in points (default 595)."},
+      "page_height": {"type": "integer", "description": "Page height in points (default 842)."},
+      "title": {"type": "string", "description": "Optional title drawn at the top."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["output_path", "widgets"],
+    "properties": {
+      "output_path": {"type": "string"},
+      "widgets": {"type": "integer"}
+    }
+  },
+  "timeout_ms": 30000,
+  "permission": "ask"
+}
