@@ -13,6 +13,24 @@ function el(tag, cls, text) {
   return e;
 }
 
+// Tool name -> argument shown in the summary line.
+const TOOL_TARGET_ARG = {
+  read_local_file: 'path', write_local_file: 'path', replace_text: 'path',
+  list_dir: 'path', render_tree: 'path', search_files: 'path',
+  read_file: 'name', write_file: 'name', check_installed: 'name',
+  search_web: 'query', search_github: 'query', search_steam: 'query', search_youtube: 'query',
+  read_webpage: 'url',
+};
+
+function toolTarget(name, argsJson) {
+  const key = TOOL_TARGET_ARG[name];
+  if (!key) return '';
+  try {
+    const p = JSON.parse(argsJson || '{}')[key];
+    return typeof p === 'string' && p ? ' ' + p : '';
+  } catch (_) { return ''; }
+}
+
 function humanSize(n) {
   if (n == null) return '';
   if (n < 1024) return n + ' B';
@@ -207,7 +225,7 @@ function connectChat(conversationId) {
     const details = el('details', 'tool-call pending');
     details.open = true;
     details.dataset.toolCallId = data.id;
-    details.appendChild(el('summary', '', `Tool call: ${data.name}`));
+    details.appendChild(el('summary', '', `Tool call: ${data.name}${toolTarget(data.name, data.args)}`));
     details.appendChild(el('pre', '', data.args));
     const btns = el('div', 'tool-call-actions');
     const mkBtn = (label, msgType, always) => {
@@ -238,7 +256,7 @@ function connectChat(conversationId) {
     const parent = existing ? existing.parentNode : container;
     if (existing) existing.remove();
     const details = el('details', 'tool-call result ' + data.status);
-    details.appendChild(el('summary', '', `Tool call${data.name ? ': ' + data.name : ''} (${data.status})`));
+    details.appendChild(el('summary', '', `Tool call${data.name ? ': ' + data.name + toolTarget(data.name, data.args) : ''} (${data.status})`));
     if (data.args) details.appendChild(el('pre', '', data.args));
     // Capture structured search results so the assistant's reply can render
     // them as cards via a [[search:SOURCE]] directive instead of restating them.

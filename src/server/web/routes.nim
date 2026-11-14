@@ -130,6 +130,24 @@ proc resultFileChipHtml(resultContent: string): string =
     discard
   ""
 
+const toolTargetArg = {
+  "read_local_file": "path", "write_local_file": "path", "replace_text": "path",
+  "list_dir": "path", "render_tree": "path", "search_files": "path",
+  "read_file": "name", "write_file": "name", "check_installed": "name",
+  "search_web": "query", "search_github": "query", "search_steam": "query",
+  "search_youtube": "query", "read_webpage": "url"}.toTable
+
+proc toolTarget(call: ParsedToolCall): string =
+  ## The argument shown after the tool name in the summary line.
+  if call.name notin toolTargetArg:
+    return ""
+  try:
+    let p = parseJson(call.argsJson){toolTargetArg[call.name]}.getStr()
+    if p.len > 0: return " " & p
+  except CatchableError:
+    discard
+  ""
+
 proc toolCallHtml(call: ParsedToolCall, resultContent: string): string =
   if call.malformed:
     return "<details class=\"tool-call result failed\"><summary>Tool call: malformed</summary><pre>" &
@@ -140,7 +158,7 @@ proc toolCallHtml(call: ParsedToolCall, resultContent: string): string =
   except CatchableError:
     ok = false
   let cls = if ok: "succeeded" else: "failed"
-  "<details class=\"tool-call result " & cls & "\"><summary>Tool call: " & escapeHtml(call.name) &
+  "<details class=\"tool-call result " & cls & "\"><summary>Tool call: " & escapeHtml(call.name & toolTarget(call)) &
     "</summary><pre>" & escapeHtml(call.argsJson) & "</pre><pre>" & escapeHtml(resultContent) &
     "</pre></details>\n"
 
