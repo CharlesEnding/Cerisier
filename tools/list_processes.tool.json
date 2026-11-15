@@ -1,0 +1,58 @@
+{
+  "name": "list_processes",
+  "description": "List running processes (like `ps -A`) and filter them with a grep-style pattern, without needing run_command approval. The pattern is matched against the whole rendered line (pid, user, %cpu, %mem, stat, command). Unlike `ps aux | grep foo` this never matches its own filter line.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/list_processes.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string",
+        "description": "Grep-style regex matched against the whole line. Empty/omitted = list all processes."
+      },
+      "ignore_case": {
+        "type": "boolean",
+        "description": "Case-insensitive match (default false)."
+      },
+      "fixed": {
+        "type": "boolean",
+        "description": "Treat pattern as a literal string, not a regex (default false)."
+      },
+      "invert": {
+        "type": "boolean",
+        "description": "Show only lines NOT matching the pattern, like `grep -v` (default false)."
+      },
+      "max_matches": {
+        "type": "integer",
+        "description": "Cap on processes returned (default 100)."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["pattern", "processes", "count", "total_matched", "truncated"],
+    "properties": {
+      "pattern": {"type": "string"},
+      "processes": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["pid", "user", "cpu", "mem", "stat", "command"],
+          "properties": {
+            "pid": {"type": "integer"},
+            "user": {"type": "string"},
+            "cpu": {"type": "string"},
+            "mem": {"type": "string"},
+            "stat": {"type": "string"},
+            "command": {"type": "string"}
+          }
+        }
+      },
+      "count": {"type": "integer"},
+      "total_matched": {"type": "integer"},
+      "truncated": {"type": "boolean"}
+    }
+  },
+  "timeout_ms": 5000,
+  "permission": "auto"
+}
