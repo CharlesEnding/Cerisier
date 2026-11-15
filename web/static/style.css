@@ -58,6 +58,9 @@ a { color: var(--accent); }
 .tool-call.pending-resolved { border-left-color: #e0a800; opacity: 0.7; }
 .tool-call-note { font-style: italic; color: var(--muted); }
 .tool-call-actions { display: flex; gap: 0.4rem; margin-top: 0.3rem; flex-wrap: wrap; }
+.tool-call-deny-reason { flex: 1 1 240px; min-width: 160px; max-width: 480px; padding: 0.3rem 0.6rem; font-size: 0.85rem; color: var(--fg); background: var(--bg-panel); border: 1px solid var(--border); border-radius: 4px; }
+.tool-call-deny-reason::placeholder { color: var(--muted); }
+.tool-call-deny-reason:focus { outline: none; border-color: var(--accent); }
 .tool-call-kill { border-color: #a33 !important; color: #ffb3b3; }
 .tool-call.result.succeeded { border-left-color: #7ee787; }
 .tool-call.result.failed, .tool-call.result.timeout,

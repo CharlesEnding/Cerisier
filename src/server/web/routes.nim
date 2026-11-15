@@ -899,12 +899,13 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
       of "tool_call_deny":
         let id = node{"id"}.getInt(0).int64
         let always = node{"always"}.getBool(false)
+        let reason = node{"reason"}.getStr("")
         if id != 0 and s.pendingApprovals.hasKey(id):
           st.pendingIds.keepItIf(it != id)
           if always:
             let (_, _, toolName, _) = s.db.getToolCall(id)
             s.toolExecutor.setSessionPermission(convId, toolName, ptDeny)
-          s.toolExecutor.deny(id)
+          s.toolExecutor.deny(id, reason)
           resolveApproval(s, id)
       of "tool_call_kill":
         let id = node{"id"}.getInt(0).int64

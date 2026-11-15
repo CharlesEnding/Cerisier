@@ -296,14 +296,27 @@ function connectChat(conversationId) {
     details.appendChild(el('summary', '', `Tool call: ${data.name}${toolTarget(data.name, data.args)}`));
     appendNode(details, toolCallBody(data.name, data.args));
     const btns = el('div', 'tool-call-actions');
+    // Small optional field the user can fill with a reason before denying; the
+    // server folds it into the tool's error result so the model can read the
+    // *why* and change course. Approve never reads it.
+    const reasonInput = el('input', 'tool-call-deny-reason');
+    reasonInput.type = 'text';
+    reasonInput.placeholder = 'reason for denying (optional)';
+    reasonInput.autocomplete = 'off';
+    const resolvePending = (label, reason) => {
+      details.className = 'tool-call pending-resolved';
+      btns.remove();
+      details.appendChild(el('div', 'tool-call-note',
+        `(${label.toLowerCase()}${reason ? ': ' + reason : ''} — waiting for result)`));
+    };
     const mkBtn = (label, msgType, always) => {
       const b = el('button', '', label);
       b.type = 'button';
       b.addEventListener('click', () => {
-        ws.send(JSON.stringify({ type: msgType, id: data.id, always }));
-        details.className = 'tool-call pending-resolved';
-        btns.remove();
-        details.appendChild(el('div', 'tool-call-note', `(${label.toLowerCase()} — waiting for result)`));
+        const payload = { type: msgType, id: data.id, always };
+        if (msgType === 'tool_call_deny') payload.reason = reasonInput.value.trim();
+        ws.send(JSON.stringify(payload));
+        resolvePending(label, payload.reason);
       });
       return b;
     };
@@ -311,6 +324,15 @@ function connectChat(conversationId) {
     btns.appendChild(mkBtn('Approve always', 'tool_call_approve', true));
     btns.appendChild(mkBtn('Deny', 'tool_call_deny', false));
     btns.appendChild(mkBtn('Deny always', 'tool_call_deny', true));
+    btns.appendChild(reasonInput);
+    // Enter in the field = a quick "Deny" carrying whatever reason was typed.
+    reasonInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const reason = reasonInput.value.trim();
+      ws.send(JSON.stringify({ type: 'tool_call_deny', id: data.id, always: false, reason }));
+      resolvePending('Deny', reason);
+    });
     const killBtn = el('button', 'tool-call-kill', 'Kill');
     killBtn.type = 'button';
     killBtn.addEventListener('click', () => ws.send(JSON.stringify({ type: 'tool_call_kill', id: data.id })));

@@ -168,8 +168,13 @@ proc requestToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, args
 proc approve*(ex: ToolExecutor, toolCallId: int64) =
   ex.db.setToolCallStatus(toolCallId, $tcsApproved)
 
-proc deny*(ex: ToolExecutor, toolCallId: int64) =
-  ex.db.setToolCallResult(toolCallId, $tcsDenied, failure("denied by user"))
+proc deny*(ex: ToolExecutor, toolCallId: int64, reason: string = "") =
+  ## `reason` is the optional free-text reason the user supplied when denying
+  ## (see the `tool_call_deny` message in routes.nim). It is folded into the
+  ## error string so the model reads the *why* and can change course. The
+  ## reason is only JSON-serialised and never run anywhere, so no injection.
+  let msg = if reason.len > 0: "denied by user: " & reason else: "denied by user"
+  ex.db.setToolCallResult(toolCallId, $tcsDenied, failure(msg))
 
 proc killToolCall*(ex: ToolExecutor, toolCallId: int64) =
   ## No-op if the call isn't currently tracked as running (e.g. already

@@ -15,14 +15,18 @@
 * Maybe fix reasoning render client side (numbered and nonnumbered lists)
 * Handle empty replies:
   [11:01:38] ERROR ws: conversation 63 got an EMPTY reply from the model: model returned an empty reply — check server logs
-* Figure out how to make tool embeds modular, same for formats, ideally we'd like a tool to ship with its embed, and to be able to have a format marketplace as well
-* Accept strings as booleans in search_files
-  Tool call: search_files /persistent/Cerisier/src (validation_failed)
-  {"pattern":"data-tool-call-id|data-tool-name|tool-args|tool-call","path":"/persistent/Cerisier/src","files_with_matches":"True"}
-  {"ok":false,"error":"files_with_matches: expected type \"boolean\", got JString"}
-* Add custom result views and custom embeds for tools
-* Give favicons white background
+* Add modular custom formats for data (like youtube search)
 * Use two replies worth of reasoning so the user can steer and not lose the agent's reasoning
-* Allow tool denials to specify a reason
 * Virtual filesystem with files, check builtin it seems we have a half built mechanism
 * Allow automatic denial of any ask tools with reason (user wants to leave it running in the background)
+
+* Study conversation 63 for speed gains
+* Build Cerisier marketplace: tools, formats, docsets, skills, workflows possibly
+  * Tools should show their renders, LOC, permissions, requirements
+
+Priority:
+* Allow tool denials to specify a reason
+* Accept strings as booleans in search_files ("True", "False")
+    Tool call: search_files /persistent/Cerisier/src (validation_failed)
+    {"pattern":"data-tool-call-id|data-tool-name|tool-args|tool-call","path":"/persistent/Cerisier/src","files_with_matches":"True"}
+    {"ok":false,"error":"files_with_matches: expected type \"boolean\", got JString"}
