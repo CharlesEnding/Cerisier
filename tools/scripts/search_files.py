@@ -11,6 +11,15 @@ import sys
 MAX_OUTPUT = 128 * 1024
 
 
+def as_bool(v):
+    """Coerce a value to bool. Handles JSON booleans and string 'true'/'false'."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.lower() == "true"
+    return bool(v)
+
+
 def main():
     try:
         args = json.loads(sys.argv[1])
@@ -25,13 +34,13 @@ def main():
 
     path = args.get("path", ".")
     glob = args.get("glob") or ""
-    ignore_case = bool(args.get("ignore_case", False))
-    fixed = bool(args.get("fixed", False))
+    ignore_case = as_bool(args.get("ignore_case", False))
+    fixed = as_bool(args.get("fixed", False))
     context = int(args.get("context", 0))
     cb = int(args.get("context_before", 0))
     ca = int(args.get("context_after", 0))
     max_matches = int(args.get("max_matches", 200))
-    files_only = bool(args.get("files_with_matches", False))
+    files_only = as_bool(args.get("files_with_matches", False))
 
     if not fixed:
         # Validate the regex locally so a bad pattern is a clean error.

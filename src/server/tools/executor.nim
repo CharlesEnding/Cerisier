@@ -142,12 +142,14 @@ proc requestToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, args
     ex.db.setToolCallResult(id, $tcsFailed, failure("unknown tool: " & toolName))
     return id
 
-  let id = ex.db.createToolCall(messageId, toolName, argsJson)
+  ## Coerce string booleans to real booleans before storing and executing.
+  let (coercedJson, errors) = validateArgs(manifest, argsJson)
+
+  let id = ex.db.createToolCall(messageId, toolName, coercedJson)
   case ex.effectivePermission(convId, toolName, manifest)
   of ptDeny:
     ex.db.setToolCallResult(id, $tcsDenied, failure("tool is disabled (permission=deny)"))
   of ptAuto:
-    let errors = validateArgs(manifest, argsJson)
     if errors.len > 0:
       ex.db.setToolCallResult(id, $tcsValidationFailed, failure(schemaErrorsMsg(errors)))
     else:
@@ -155,7 +157,6 @@ proc requestToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, args
   of ptAutoWorkdir:
     let wd = ex.workingDirFor(convId)
     if isWithinWorkingDir(wd, manifest.pathArgs.join(","), argsJson):
-      let errors = validateArgs(manifest, argsJson)
       if errors.len > 0:
         ex.db.setToolCallResult(id, $tcsValidationFailed, failure(schemaErrorsMsg(errors)))
       else:
@@ -274,7 +275,7 @@ proc execute*(ex: ToolExecutor, convId, toolCallId: int64, toolName, argsJson: s
     ex.db.setToolCallResult(toolCallId, $tcsFailed, failure("unknown tool: " & toolName))
     return
 
-  let inputErrors = validateArgs(manifest, argsJson)
+  let (_, inputErrors) = validateArgs(manifest, argsJson)
   if inputErrors.len > 0:
     ex.db.setToolCallResult(toolCallId, $tcsValidationFailed, failure(schemaErrorsMsg(inputErrors)))
     return
@@ -289,12 +290,13 @@ proc dispatchToolCall*(ex: ToolExecutor, convId, messageId: int64, toolName, arg
   ##     user decided and (when approved) the approve handler ran it, or
   ##   * `approved` (auto permission / "approve always") -> run it right here.
   ## Terminal states (denied, validation_failed, unknown tool) need nothing more.
-  let id = ex.requestToolCall(convId, messageId, toolName, argsJson)
+  let coercedJson = coerceArgs(ex.registry.find(toolName), argsJson)
+  let id = ex.requestToolCall(convId, messageId, toolName, coercedJson)
   var row = ex.db.getToolCall(id)
   if row.status == $tcsPendingApproval:
-    await askUser(id, toolName, argsJson)
+    await askUser(id, toolName, coercedJson)
     row = ex.db.getToolCall(id)
   elif row.status == $tcsApproved:
-    await ex.execute(convId, id, toolName, argsJson)
+    await ex.execute(convId, id, toolName, coercedJson)
     row = ex.db.getToolCall(id)
   DispatchResult(id: id, status: row.status, resultJson: row.resultJson)

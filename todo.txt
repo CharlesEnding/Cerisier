@@ -22,11 +22,9 @@
 
 * Study conversation 63 for speed gains
 * Build Cerisier marketplace: tools, formats, docsets, skills, workflows possibly
-  * Tools should show their renders, LOC, permissions, requirements
+    Tools should show their renders, LOC, permissions, requirements
+* Add projects (multiple chat, share some folder & settings)
 
 Priority:
-* Allow tool denials to specify a reason
-* Accept strings as booleans in search_files ("True", "False")
-    Tool call: search_files /persistent/Cerisier/src (validation_failed)
-    {"pattern":"data-tool-call-id|data-tool-name|tool-args|tool-call","path":"/persistent/Cerisier/src","files_with_matches":"True"}
-    {"ok":false,"error":"files_with_matches: expected type \"boolean\", got JString"}
+* Rename Approve always to Approve always for this chat
+* Remove Approve always for Run Command (so user won't believe it's this command only and not the full tool call)
