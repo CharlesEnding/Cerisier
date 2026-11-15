@@ -80,6 +80,7 @@
   },
   "timeout_ms": 10000,
   "permission": "auto",
+  "view": { "renderer": "tools/scripts/search_files.view.js", "result": { "kind": "search_files" } },
   "path_args": [
     "path"
   ]

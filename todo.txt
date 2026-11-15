@@ -18,10 +18,11 @@
 * Add modular custom formats for data (like youtube search)
 * Use two replies worth of reasoning so the user can steer and not lose the agent's reasoning
 * Virtual filesystem with files, check builtin it seems we have a half built mechanism
+  * Adaptive context pull files in and out so we don't have to keep querying them
+  * Where to put it in context?
 * Allow automatic denial of any ask tools with reason (user wants to leave it running in the background)
 
 * Build Cerisier marketplace: tools, formats, docsets, skills, workflows possibly
     Tools should show their renders, LOC, permissions, requirements
 * Add projects (multiple chat, share some folder & settings)
-
-Priority:
+* write file tools should have pretty rendering of file contents (it's not a result it's a param)
