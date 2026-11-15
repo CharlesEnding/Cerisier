@@ -4,7 +4,6 @@
     * Extract audio
     * Trim
     * Crop timerange
-* Screenshot
 * Image tools
     * OCR
 * Image generation
@@ -15,3 +14,6 @@
 * Tools that we allow us to reduce user asks:
     * SQL select interface
 * auto for /tmp reads
+* ps aux grep tool
+* read tmp file
+* date time

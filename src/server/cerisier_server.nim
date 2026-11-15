@@ -1,7 +1,7 @@
 ## cerisier-server: Prologue web app + agent loop, talking to an
 ## OpenAI-compatible model backend. Entry point wiring all modules together.
 
-import std/[os, tables, asyncdispatch]
+import std/[os, tables, asyncdispatch, json]
 import prologue
 import ./config
 import ./db/database
@@ -20,6 +20,7 @@ when isMainModule:
 
   let db = database.open(cfg.dbPath)
   db.migrate()
+  db.failStaleToolCalls()
 
   let api = newApiClient(cfg.apiUrl, cfg.apiKey)
   let orchestrator = newOrchestrator(db)
@@ -30,7 +31,8 @@ when isMainModule:
     staticDir: root / "web" / "static", chatSessions: initTable[int64, ChatSession](),
     toolRegistry: toolRegistry, toolExecutor: toolExecutor,
     loop: LoopEnv(db: db, api: api, registry: toolRegistry, executor: toolExecutor, dataDir: cfg.dataDir, promptFile: cfg.promptFile),
-    pendingApprovals: initTable[int64, Future[void]](), dataDir: cfg.dataDir)
+    pendingApprovals: initTable[int64, Future[void]](), pendingEvents: initTable[int64, JsonNode](),
+    dataDir: cfg.dataDir)
 
   var app = newApp(settings = newSettings(
     appName = "cerisier",

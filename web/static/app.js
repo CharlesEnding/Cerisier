@@ -61,6 +61,22 @@ function stripToolCalls(text) {
   return out.trim();
 }
 
+// Show each <time datetime> under `root` in the browser's local time.
+function fillTimes(root) {
+  root.querySelectorAll('time.msg-time').forEach((t) => {
+    const d = new Date(t.dateTime);
+    if (!isNaN(d)) t.textContent = d.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  });
+}
+
+// A timestamp element for "now", already filled in.
+function timeEl(extraClass) {
+  const t = el('time', 'msg-time' + (extraClass ? ' ' + extraClass : ''));
+  t.dateTime = new Date().toISOString();
+  t.textContent = new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+  return t;
+}
+
 function richInto(node, text) {
   node.innerHTML = window.CerisierRich ? window.CerisierRich.render(text) : '';
   if (!window.CerisierRich) node.textContent = text;
@@ -172,7 +188,7 @@ function connectChat(conversationId) {
     stream = null;
     if (s.raf) cancelAnimationFrame(s.raf);
     const visible = stripToolCalls(s.text);
-    if (keep && visible) richInto(s.div, visible);
+    if (keep && visible) { richInto(s.div, visible); s.div.after(timeEl('assistant-time')); }
     else s.div.remove();
   }
   function pushReasoning(tok) {
@@ -235,7 +251,14 @@ function connectChat(conversationId) {
   try { renderTodos(JSON.parse((todoBox && todoBox.dataset.todos) || '[]')); } catch (_) { renderTodos([]); }
 
   // ---- tool call cards --------------------------------------------------
+  // After a reload, calls still waiting on an answer are rendered without a result;
+  // the server re-sends their live prompt, so drop the stale copies.
+  function dropAwaiting() {
+    log.querySelectorAll('.tool-call.awaiting').forEach((d) => d.remove());
+  }
+
   function showToolPending(data) {
+    dropAwaiting();
     const details = el('details', 'tool-call pending');
     details.open = true;
     details.dataset.toolCallId = data.id;
@@ -270,6 +293,7 @@ function connectChat(conversationId) {
     const parent = existing ? existing.parentNode : container;
     if (existing) existing.remove();
     const details = el('details', 'tool-call result ' + data.status);
+    if (data.status !== 'succeeded') details.open = true; // timeouts, denials and failures must not hide in a collapsed card
     details.appendChild(el('summary', '', `Tool call${data.name ? ': ' + data.name + toolTarget(data.name, data.args) : ''} (${data.status})`));
     if (data.args) details.appendChild(el('pre', '', data.args));
     // Capture structured search results so the assistant's reply can render
@@ -348,6 +372,7 @@ function connectChat(conversationId) {
         showToolResult(data);
         return;
       case 'todo_update': renderTodos(data.items); return;
+      case 'turn_active': dropAwaiting(); setGenerating(true); return;
       case 'usage': renderCtxMeter(data.used, data.ctx); return;
       case 'title_updated': {
         const t = document.getElementById('chat-title');
@@ -373,6 +398,7 @@ function connectChat(conversationId) {
           const div = el('div', 'msg assistant md');
           richInto(div, data.content);
           log.appendChild(div);
+          log.appendChild(timeEl('assistant-time'));
           log.scrollTop = log.scrollHeight;
         }
         return;
@@ -406,6 +432,7 @@ function connectChat(conversationId) {
     richInto(node, node.textContent);
     node.removeAttribute('data-md');
   });
+  fillTimes(log);
   log.scrollTop = log.scrollHeight;
 
   log.addEventListener('click', (e) => {
@@ -434,6 +461,7 @@ function connectChat(conversationId) {
         files.forEach((f) => box.appendChild(fileChip(f)));
         div.appendChild(box);
       }
+      div.appendChild(timeEl());
       log.appendChild(div);
     });
     log.scrollTop = log.scrollHeight;

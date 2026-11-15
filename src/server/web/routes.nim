@@ -35,6 +35,7 @@ type
     toolExecutor*: ToolExecutor
     loop*: LoopEnv
     pendingApprovals*: Table[int64, Future[void]] ## toolCallId -> resolved when approve/deny/kill lands
+    pendingEvents*: Table[int64, JsonNode] ## toolCallId -> its `tool_call_pending` event, re-sent when a browser reconnects
     dataDir*: string ## runtime data dir; uploads / generated files live under <dataDir>/files
 
 var state*: AppState
@@ -163,10 +164,11 @@ proc toolCallHtml(call: ParsedToolCall, resultContent: string): string =
     ok = parseJson(resultContent){"ok"}.getBool(false)
   except CatchableError:
     ok = false
-  let cls = if ok: "succeeded" else: "failed"
+  let cls = if resultContent.len == 0: "awaiting" elif ok: "succeeded" else: "failed"
+  let openAttr = if cls == "failed": " open" else: ""
   ## The args <pre> is tagged so the front-end can turn a replace_text call's
   ## args into a coloured diff on reload (see toolDiffHtml in web/static/app.js).
-  "<details class=\"tool-call result " & cls & "\" data-tool-name=\"" & escapeAttr(call.name) &
+  "<details class=\"tool-call result " & cls & "\"" & openAttr & " data-tool-name=\"" & escapeAttr(call.name) &
     "\"><summary>Tool call: " & escapeHtml(call.name & toolTarget(call)) &
     "</summary><pre class=\"tool-args\">" & escapeHtml(call.argsJson) & "</pre><pre>" & escapeHtml(resultContent) &
     "</pre></details>\n"
@@ -660,12 +662,14 @@ proc maybeGenerateTitle(s: AppState, convId: int64, sess: ChatSession,
 
 type
   ChatTurnState = ref object
-    ## Heap-allocated shared state for one WebSocket connection's in-flight
-    ## turn. Deliberately NOT captured as plain `var` locals closed over by
+    ## Heap-allocated state for a conversation's in-flight turn, shared by every
+    ## browser connection to it (a reload must not start a second turn).
+    ## Deliberately NOT captured as plain `var` locals closed over by
     ## a nested async proc: nested async closures over outer-proc locals
     ## have triggered segfaults on this toolchain, so the mutable state
     ## lives on its own ref object instead and every callback closes over
     ## that ref (safe) rather than the enclosing proc's stack frame.
+    convId: int64
     generating: bool
     cancelled: bool
     pendingIds: seq[int64] ## tool calls waiting for an approve/deny click (denied if the turn is cancelled)
@@ -721,6 +725,22 @@ proc runSender(ws: WebSocket, q: TokenQueue): Future[void] {.async, gcsafe.} =
       q.closed = true
       break
 
+var
+  turnStates: Table[int64, ChatTurnState]
+  outQueues: Table[int64, TokenQueue] ## the queue of the browser connection currently attached to each conversation
+
+proc turnFor(convId: int64): ChatTurnState {.gcsafe.} =
+  {.cast(gcsafe).}:
+    if not turnStates.hasKey(convId):
+      turnStates[convId] = ChatTurnState(convId: convId, pendingIds: @[])
+    result = turnStates[convId]
+
+proc publish(convId: int64, ev: JsonNode) {.gcsafe.} =
+  ## Dropped when no browser is attached; the DB already has everything.
+  {.cast(gcsafe).}:
+    if outQueues.hasKey(convId):
+      outQueues[convId].push(ev)
+
 # ---------------- Agent loop helpers ----------------
 
 proc resolveApproval(s: AppState, id: int64) =
@@ -729,21 +749,25 @@ proc resolveApproval(s: AppState, id: int64) =
   if s.pendingApprovals.hasKey(id):
     let fut = s.pendingApprovals[id]
     s.pendingApprovals.del(id)
+    s.pendingEvents.del(id)
     if not fut.finished:
       fut.complete()
 
-proc makeWebHooks(s: AppState, st: ChatTurnState, queue: TokenQueue): AgentHooks =
-  ## Everything the loop reports goes through `queue` so events stay in order
-  ## with the streamed tokens (the queue is drained by `runSender`). A pending
-  ## approval resolves when the approve/deny/cancel handler in `wsChat` calls
-  ## `resolveApproval`.
+proc makeWebHooks(s: AppState, st: ChatTurnState): AgentHooks =
+  ## Everything the loop reports goes through the conversation's current
+  ## connection queue so events stay in order with the streamed tokens (the
+  ## queue is drained by `runSender`). A pending approval resolves when the
+  ## approve/deny/cancel handler in `wsChat` calls `resolveApproval`.
   proc emitEvent(ev: JsonNode) {.gcsafe.} =
-    queue.push(ev)
+    publish(st.convId, ev)
   proc askFn(toolCallId: int64, toolName, argsJson: string): Future[void] {.gcsafe.} =
     let fut = newFuture[void]("pendingApproval")
     s.pendingApprovals[toolCallId] = fut
     st.pendingIds.add(toolCallId)
-    queue.push(%*{"type": "tool_call_pending", "id": toolCallId, "name": toolName, "args": argsJson})
+    let ev = %*{"type": "tool_call_pending", "id": toolCallId, "name": toolName, "args": argsJson,
+                "conv": st.convId}
+    s.pendingEvents[toolCallId] = ev
+    publish(st.convId, ev)
     result = fut
   proc cancelledFn(): bool {.gcsafe.} =
     st.cancelled
@@ -753,7 +777,7 @@ proc executeApproved(s: AppState, convId, id: int64, toolName, argsJson: string)
   await s.toolExecutor.execute(convId, id, toolName, argsJson)
   resolveApproval(s, id)
 
-proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
+proc handleUserMessage(s: AppState, convId: int64,
                         st: ChatTurnState, content: string, fileIds: seq[int64]) {.async, gcsafe.} =
   st.generating = true
   st.cancelled = false
@@ -765,14 +789,7 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
       $fileIds.len & " attachment(s))")
     try:
       let sess = await getOrCreateChatSession(s, convId)
-      let queue = newTokenQueue()
-      let senderFut = runSender(ws, queue)
-      var turn: TurnResult
-      try:
-        turn = await runAgentTurn(s.loop, convId, sess, makeWebHooks(s, st, queue))
-      finally:
-        closeQueue(queue)
-        await senderFut
+      let turn = await runAgentTurn(s.loop, convId, sess, makeWebHooks(s, st))
       let finalReply = turn.reply
 
       if finalReply.content.len == 0 and not st.cancelled:
@@ -782,21 +799,21 @@ proc handleUserMessage(s: AppState, convId: int64, ws: WebSocket,
         let reason = if finalReply.error.len > 0: finalReply.error
                      else: "model returned an empty reply — check server logs"
         logError("ws", "conversation " & $convId & " got an EMPTY reply from the model: " & reason)
-        await ws.send($(%*{"type": "error", "content": reason}))
+        publish(convId, %*{"type": "error", "content": reason})
       else:
         if finalReply.content.len == 0:
           logInfo("ws", "conversation " & $convId & " got an EMPTY reply from the model (cancelled=" & $st.cancelled & ")")
         else:
           logInfo("api", "sendTurn reply (" & $finalReply.content.len & " chars, " &
             $finalReply.reasoning.len & " reasoning char(s), cancelled=" & $st.cancelled & ")")
-        await ws.send($(%*{"type": "assistant_message", "content": finalReply.content,
-                           "reasoning": finalReply.reasoning, "cancelled": st.cancelled}))
+        publish(convId, %*{"type": "assistant_message", "content": finalReply.content,
+                           "reasoning": finalReply.reasoning, "cancelled": st.cancelled})
       let newTitle = await maybeGenerateTitle(s, convId, sess, turn.history)
       if newTitle.isSome:
-        await ws.send($(%*{"type": "title_updated", "title": newTitle.get()}))
+        publish(convId, %*{"type": "title_updated", "title": newTitle.get()})
     except CatchableError as e:
       logError("ws", "conversation " & $convId & " chat turn failed: " & $e.name & ": " & e.msg)
-      await ws.send($(%*{"type": "error", "content": e.msg}))
+      publish(convId, %*{"type": "error", "content": e.msg})
   finally:
     st.generating = false
 
@@ -804,7 +821,19 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
   let s = getState()
   let convId = parseInt(ctx.getPathParams("id")).int64
   var ws = await newWebSocket(ctx)
-  let st = ChatTurnState(generating: false, cancelled: false, pendingIds: @[])
+  let st = turnFor(convId)
+  ## This connection becomes the one the conversation's turn reports to; a turn
+  ## started by an earlier connection (before a reload) keeps running and its
+  ## events and approval prompts follow the browser here.
+  let queue = newTokenQueue()
+  {.cast(gcsafe).}:
+    outQueues[convId] = queue
+  let senderFut = runSender(ws, queue)
+  if st.generating:
+    queue.push(%*{"type": "turn_active"})
+  for _, ev in s.pendingEvents:
+    if ev{"conv"}.getBiggestInt() == convId:
+      queue.push(ev)
   while ws.readyState == Open:
     try:
       let packet = await ws.receiveStrPacket()
@@ -827,7 +856,7 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
       of "user_message":
         if st.generating:
           logInfo("ws", "conversation " & $convId & " rejected user message: a reply is already in progress")
-          await ws.send($(%*{"type": "assistant_message", "content": "(a reply is already being generated — please wait)"}))
+          queue.push(%*{"type": "assistant_message", "content": "(a reply is already being generated — please wait)"})
         else:
           let content = node{"content"}.getStr("")
           var fileIds: seq[int64] = @[]
@@ -838,7 +867,7 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
               if fid != 0:
                 fileIds.add(fid)
           if content.strip().len > 0 or fileIds.len > 0:
-            asyncCheck handleUserMessage(s, convId, ws, st, content, fileIds)
+            asyncCheck handleUserMessage(s, convId, st, content, fileIds)
       of "tool_call_approve":
         let id = node{"id"}.getInt(0).int64
         let always = node{"always"}.getBool(false)
@@ -873,6 +902,11 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
     except CatchableError as e:
       logInfo("ws", "conversation " & $convId & " unexpected error: " & $e.name & ": " & e.msg)
       break
+  closeQueue(queue)
+  {.cast(gcsafe).}:
+    if outQueues.getOrDefault(convId) == queue:
+      outQueues.del(convId)
+  await senderFut
 
 # ---------------- Chat settings, uploads, downloads ----------------
 

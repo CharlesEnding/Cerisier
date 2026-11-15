@@ -241,6 +241,12 @@ proc setToolCallStatus*(db: Database, id: int64, status: string) =
 proc setToolCallResult*(db: Database, id: int64, status, resultJson: string) =
   db.conn.exec(sql"UPDATE tool_calls SET status = ?, result_json = ? WHERE id = ?", status, resultJson, id)
 
+proc failStaleToolCalls*(db: Database) =
+  ## Nothing can still be waiting on these once the server has restarted.
+  db.conn.exec(sql"""UPDATE tool_calls SET status = 'failed',
+    result_json = '{"ok":false,"error":"interrupted: the server restarted"}'
+    WHERE status IN ('pending_approval', 'approved', 'running')""")
+
 proc pendingToolCalls*(db: Database): seq[(int64, int64, string, string, string)] =
   ## (id, message_id, tool_name, location, args_json)
   result = @[]

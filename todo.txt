@@ -15,5 +15,4 @@
 * Fix duplicated date, don't include it in the context, maybe in reasoning, who knows
 * Fix multiple tool calls only getting one result by the harness
 * Try passing entire reasoning instead of only since last user message.
-* See if tool result should be sent in another channel, like reasoning_content
-* Add ps aux grep tool
+* render_tree output should be rendered nicer in tool output
