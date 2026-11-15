@@ -1,10 +1,9 @@
-## Host description for the system prompt ({{system}}): OS, CPU, RAM, free disk
-## and the versions of common programs. The slow, unchanging part (program
-## versions) is probed once by `initSystemInfo`, which must run before the
-## server starts accepting requests because it blocks. RAM and disk are read on
-## every call.
+## Host description for the system prompt ({{system}}): OS, CPU, total RAM
+## and the versions of common programs. Probed once by `initSystemInfo`, which
+## must run before the server starts accepting requests because it blocks.
+## Nothing here may change between calls: it would invalidate the backend's prompt cache.
 
-import std/[strutils, os, osproc, posix]
+import std/[strutils, os, osproc]
 
 const probes: seq[(string, string)] = @[
   ("git", "--version"), ("python3", "--version"), ("pip3", "--version"),
@@ -70,14 +69,7 @@ proc memMb(key: string): int =
   let v = readKeyed("/proc/meminfo", key).split(' ')[0]
   try: parseInt(v) div 1024 except ValueError: 0
 
-proc freeGb(path: string): string =
-  var s: Statvfs
-  if statvfs(path.cstring, s) != 0:
-    return "unknown"
-  let bytes = s.f_bavail.int64 * s.f_frsize.int64
-  formatFloat(bytes.float / 1073741824.0, ffDecimal, 1) & " GB"
-
-proc systemInfoText*(workingDir: string): string =
+proc systemInfoText*(): string =
   {.cast(gcsafe).}:
     var lines = @["## Host machine"]
     if osLine.len > 0:
@@ -85,10 +77,7 @@ proc systemInfoText*(workingDir: string): string =
     if cpuLine.strip().len > 0:
       lines.add("- CPU: " & cpuLine)
     lines.add("- User home directory: " & getHomeDir().strip(leading = false, chars = {'/'}))
-    lines.add("- RAM: " & $memMb("MemTotal") & " MB total, " & $memMb("MemAvailable") & " MB available")
-    lines.add("- Free disk space: " & freeGb("/") & " on /")
-    if workingDir.len > 0 and dirExists(workingDir):
-      lines.add("  and " & freeGb(workingDir) & " where the working directory is")
+    lines.add("- RAM: " & $memMb("MemTotal") & " MB total")
     if programsLine.len > 0:
       lines.add("- Installed programs: " & programsLine)
     result = lines.join("\n")
