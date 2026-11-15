@@ -62,6 +62,12 @@ a { color: var(--accent); }
 .tool-call-deny-reason::placeholder { color: var(--muted); }
 .tool-call-deny-reason:focus { outline: none; border-color: var(--accent); }
 .tool-call-kill { border-color: #a33 !important; color: #ffb3b3; }
+.tool-call-question { display: flex; flex-direction: column; gap: 0.4rem; margin-top: 0.6rem; }
+.tool-call-question-label { font-weight: 600; color: var(--fg); font-size: 0.95rem; }
+.tool-call-question-input { width: 100%; padding: 0.4rem 0.6rem; font-size: 0.9rem; color: var(--fg); background: var(--bg-panel); border: 1px solid var(--border); border-radius: 4px; }
+.tool-call-question-input::placeholder { color: var(--muted); }
+.tool-call-question-input:focus { outline: none; border-color: var(--accent); }
+.tool-call-question button { align-self: flex-start; padding: 0.3rem 0.8rem; }
 .tool-call.result.succeeded { border-left-color: #7ee787; }
 .tool-call.result.failed, .tool-call.result.timeout,
 .tool-call.result.protocol_error, .tool-call.result.validation_failed { border-left-color: #a33; }

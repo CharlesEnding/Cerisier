@@ -1,0 +1,23 @@
+{
+  "name": "ask_question",
+  "description": "Ask the user a question and get their free-text answer. The user sees the question in a text field and types their response.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/ask_question.py",
+  "input_schema": {
+    "type": "object",
+    "required": ["question"],
+    "properties": {
+      "question": {"type": "string", "description": "The question to present to the user."}
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["question", "answer"],
+    "properties": {
+      "question": {"type": "string", "description": "The question that was asked."},
+      "answer": {"type": "string", "description": "The user's free-text answer."}
+    }
+  },
+  "timeout_ms": 300000,
+  "permission": "ask"
+}

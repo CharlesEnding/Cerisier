@@ -1,18 +1,17 @@
--1. Make LLM batch the commands if they're not sequentially related (output of one needed for the other)
-2. Add a system prompt page with editable prompt.
-4. "Ask for help tool call that takes in an answer."
-5. Fix loops
-7. Tool & skill marketplace
-9. Adaptive reasoning effort (the agent chooses it himself)
-10. Add folder awareness and foldable file panel
-11. Mixed tool call -> Zed + Cerisier rather than alternatives. We need to be able to spawn subagent but also read and modify files using Zed's tools.
-12. Have subagent calls be titled after what they do. A single line that's expandable. Maybe cerisier only.
-13. Different subagent types with different permissions and launch permissions:
-    thinking agent with no command -> automatic launch, subagent launch should take a reasoning effort
-14. Command summary. A command tool call should explain what it does and whether it's safe.
+Quality of life:
+* Add a system prompt page with editable prompt.
+* Have subagent calls be titled after what they do. A single line that's expandable. Maybe cerisier only.
+* Command summary. A command tool call should explain what it does and whether it's safe.
+* Render reasoning in a prettier way in the client (formatting, paragraphs,...)
+* write_local_file tools should have pretty rendering of file contents (it's not a result it's a param)
 
+Features:
+* Adaptive reasoning effort (the agent chooses it himself)
+* Add folder awareness and foldable file panel
+* Mixed tool call -> Zed + Cerisier rather than alternatives. We need to be able to spawn subagent but also read and modify files using Zed's tools.
+* Different subagent types with different permissions and launch permissions:
+    thinking agent with no command -> automatic launch, subagent launch should take a reasoning effort
 * Fix bing search (adversarial garbage data return, choose another provider)
-* Maybe fix reasoning render client side (numbered and nonnumbered lists)
 * Handle empty replies:
   [11:01:38] ERROR ws: conversation 63 got an EMPTY reply from the model: model returned an empty reply — check server logs
 * Add modular custom formats for data (like youtube search)
@@ -21,8 +20,9 @@
   * Adaptive context pull files in and out so we don't have to keep querying them
   * Where to put it in context?
 * Allow automatic denial of any ask tools with reason (user wants to leave it running in the background)
-
 * Build Cerisier marketplace: tools, formats, docsets, skills, workflows possibly
     Tools should show their renders, LOC, permissions, requirements
 * Add projects (multiple chat, share some folder & settings)
-* write file tools should have pretty rendering of file contents (it's not a result it's a param)
+* Add example w/ input & output to each tool manifest
+* Add skill list to system prompt
+* Add modified files list in the bottom, figure out the ui so it's not too big vertically with the todo list, add a diff viewer as well, open it in a new tab

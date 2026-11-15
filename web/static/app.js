@@ -295,6 +295,39 @@ function connectChat(conversationId) {
     details.dataset.toolCallId = data.id;
     details.appendChild(el('summary', '', `Tool call: ${data.name}${toolTarget(data.name, data.args)}`));
     appendNode(details, toolCallBody(data.name, data.args));
+    // Special UI for ask_question: show a text field for the answer instead of approve/deny.
+    if (data.name === 'ask_question') {
+      let question = '';
+      try { question = JSON.parse(data.args || '{}').question || ''; } catch (_) {}
+      const field = el('div', 'tool-call-question');
+      const label = el('label', 'tool-call-question-label');
+      label.textContent = question || 'Your answer:';
+      field.appendChild(label);
+      const answerInput = el('input', 'tool-call-question-input');
+      answerInput.type = 'text';
+      answerInput.placeholder = 'Type your answer…';
+      answerInput.autocomplete = 'off';
+      field.appendChild(answerInput);
+      const submitBtn = el('button', '', 'Submit');
+      submitBtn.type = 'button';
+      const resolveQuestion = () => {
+        const ans = answerInput.value.trim() || '(no answer)';
+        ws.send(JSON.stringify({ type: 'tool_call_answer', id: data.id, answer: ans }));
+        details.className = 'tool-call pending-resolved';
+        field.remove();
+        details.appendChild(el('div', 'tool-call-note', `(answered: ${ans} — waiting for result)`));
+      };
+      submitBtn.addEventListener('click', resolveQuestion);
+      answerInput.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        resolveQuestion();
+      });
+      field.appendChild(submitBtn);
+      details.appendChild(field);
+      container.appendChild(details);
+      return;
+    }
     const btns = el('div', 'tool-call-actions');
     // Small optional field the user can fill with a reason before denying; the
     // server folds it into the tool's error result so the model can read the

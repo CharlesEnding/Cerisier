@@ -177,6 +177,13 @@ proc deny*(ex: ToolExecutor, toolCallId: int64, reason: string = "") =
   let msg = if reason.len > 0: "denied by user: " & reason else: "denied by user"
   ex.db.setToolCallResult(toolCallId, $tcsDenied, failure(msg))
 
+proc answerToolCall*(ex: ToolExecutor, toolCallId: int64, answer: string) =
+  ## Sets a successful result for a tool call that was answered by the user
+  ## via the chat UI (see the `tool_call_answer` message in routes.nim).
+  ## Bypasses script execution: the answer IS the result.
+  let resultJson = $(%*{"ok": true, "data": {"answer": answer}})
+  ex.db.setToolCallResult(toolCallId, $tcsSucceeded, resultJson)
+
 proc killToolCall*(ex: ToolExecutor, toolCallId: int64) =
   ## No-op if the call isn't currently tracked as running (e.g. already
   ## finished, or never started) — `deny()` already covers the

@@ -911,6 +911,13 @@ proc wsChat*(ctx: Context) {.async, gcsafe.} =
         let id = node{"id"}.getInt(0).int64
         if id != 0:
           s.toolExecutor.killToolCall(id)
+      of "tool_call_answer":
+        let id = node{"id"}.getInt(0).int64
+        let answer = node{"answer"}.getStr("")
+        if id != 0 and s.pendingApprovals.hasKey(id):
+          st.pendingIds.keepItIf(it != id)
+          s.toolExecutor.answerToolCall(id, answer)
+          resolveApproval(s, id)
       else:
         logInfo("ws", "conversation " & $convId & " unknown message type: " & msgType)
     except WebSocketError:
