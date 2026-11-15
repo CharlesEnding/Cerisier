@@ -20,11 +20,8 @@
 * Virtual filesystem with files, check builtin it seems we have a half built mechanism
 * Allow automatic denial of any ask tools with reason (user wants to leave it running in the background)
 
-* Study conversation 63 for speed gains
 * Build Cerisier marketplace: tools, formats, docsets, skills, workflows possibly
     Tools should show their renders, LOC, permissions, requirements
 * Add projects (multiple chat, share some folder & settings)
 
 Priority:
-* Rename Approve always to Approve always for this chat
-* Remove Approve always for Run Command (so user won't believe it's this command only and not the full tool call)

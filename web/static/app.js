@@ -321,7 +321,7 @@ function connectChat(conversationId) {
       return b;
     };
     btns.appendChild(mkBtn('Approve', 'tool_call_approve', false));
-    btns.appendChild(mkBtn('Approve always', 'tool_call_approve', true));
+    if (data.name !== 'run_command') btns.appendChild(mkBtn('Approve always for this chat', 'tool_call_approve', true));
     btns.appendChild(mkBtn('Deny', 'tool_call_deny', false));
     btns.appendChild(mkBtn('Deny always', 'tool_call_deny', true));
     btns.appendChild(reasonInput);
