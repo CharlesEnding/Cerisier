@@ -50,6 +50,7 @@
   },
   "timeout_ms": 10000,
   "permission": "auto_workdir",
+  "view": { "result": { "kind": "text", "field": "content", "note": "truncated" } },
   "path_args": [
     "path"
   ]

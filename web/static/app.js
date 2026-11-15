@@ -45,87 +45,35 @@ function toolTarget(name, argsJson) {
   } catch (_) { return ''; }
 }
 
-// ---------------------------------------------------------------- diff view
-// Coloured line-level diff for replace_text, shown in place of the raw JSON
-// args. Deletions use the same palette as rich.js (tok-del / tok-add).
-function escapeHtml(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+// ---------------------------------------------------------------- tool card
+// The args and result slots of a tool-call card are rendered by the views
+// registry in web/static/views.js (see window.CerisierViews).
+
+// The args slot of a tool-call card, rendered by the views registry (web/static/views.js).
+// Wrap `html` and return a fragment of ALL its children. A rendered slot can be
+// several sibling top-level elements (a table emits header + meta + table); keeping
+// only w.firstChild would drop everything after the first element.
+function unwrap(w) {
+  const frag = document.createDocumentFragment();
+  while (w.firstChild) frag.appendChild(w.firstChild);
+  return frag;
 }
 
-function lineDiff(oldText, newText) {
-  const a = oldText.split('\n'), b = newText.split('\n');
-  const n = a.length, m = b.length;
-  // LCS table, then walk it to emit keep/add/del operations.
-  const dp = new Array(n + 1);
-  for (let i = 0; i <= n; i++) dp[i] = new Uint32Array(m + 1);
-  for (let i = n - 1; i >= 0; i--)
-    for (let j = m - 1; j >= 0; j--)
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-  const ops = [];
-  let i = 0, j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) { ops.push({ op: ' ', t: a[i] }); i++; j++; }
-    else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ op: '-', t: a[i] }); i++; }
-    else { ops.push({ op: '+', t: b[j] }); j++; }
-  }
-  while (i < n) { ops.push({ op: '-', t: a[i++] }); }
-  while (j < m) { ops.push({ op: '+', t: b[j++] }); }
-  return ops;
-}
-
-// Unified-style context: mark every changed line plus CTX lines either side,
-// then collapse runs of unmarked lines into a single gap marker. Same idea as
-// git diff --unified.
-function diffBodyHtml(ops) {
-  const CTX = 2;
-  const keep = new Array(ops.length).fill(false);
-  for (let k = 0; k < ops.length; k++) {
-    if (ops[k].op === ' ') continue;
-    const lo = Math.max(0, k - CTX), hi = Math.min(ops.length, k + CTX + 1);
-    for (let u = lo; u < hi; u++) keep[u] = true;
-  }
-  let html = '', gaps = 0;
-  for (let k = 0; k < ops.length; k++) {
-    if (!keep[k]) { gaps++; continue; }
-    if (gaps > 0) { html += diffGap(gaps); gaps = 0; }
-    const o = ops[k];
-    html += '<span class="drow d' + (o.op === ' ' ? 'ctx' : o.op) + '">' + o.op + escapeHtml(o.t) + '</span>';
-  }
-  if (gaps > 0) html += diffGap(gaps);
-  return html;
-}
-
-function diffGap(skipped) {
-  return '<span class="drow dgap">' + skipped + ' unchanged line' + (skipped === 1 ? '' : 's') + '</span>';
-}
-
-// Build the coloured diff for a replace_text call, or '' if it can't be shown
-// (not replace_text, args unparseable, nothing changed, or too big to diff --
-// in all those cases the caller falls back to the raw JSON args).
-function toolDiffHtml(name, argsJson) {
-  if (name !== 'replace_text') return '';
-  try {
-    const p = JSON.parse(argsJson || '{}');
-    if (typeof p.old !== 'string' || typeof p.new !== 'string' || p.old === p.new) return '';
-    if (p.old.length * p.new.length > 2500000) return ''; // quadratic guard
-    const ops = lineDiff(p.old, p.new);
-    const body = diffBodyHtml(ops);
-    if (!body) return '';
-    let meta = '';
-    if (typeof p.count === 'number') meta = ' · ' + p.count + ' replacement' + (p.count === 1 ? '' : 's');
-    const head = '<div class="tdiff-head"><span class="tdiff-path">' + escapeHtml(p.path || '') +
-      '</span><span class="tdiff-meta">' + meta + '</span></div>';
-    return '<div class="tool-diff">' + head + '<div class="tdiff-body">' + body + '</div></div>';
-  } catch (_) { return ''; }
-}
-
-// The body of a tool-call card: a diff block for replace_text, else the JSON.
 function toolCallBody(name, argsJson) {
-  const d = toolDiffHtml(name, argsJson);
-  if (!d) return el('pre', '', argsJson);
   const w = el('div', '');
-  w.innerHTML = d;
-  return w;
+  w.innerHTML = (window.CerisierViews ? window.CerisierViews.renderArgs(name, argsJson || '') : '');
+  return unwrap(w);
+}
+// Append either a DOM node or a DocumentFragment to `parent`.
+function appendNode(parent, node) {
+  if (node) parent.appendChild(node);
+}
+// Render a tool result into a DOM node via the views registry, capturing a
+// search_* payload so the assistant's [[search:SOURCE]] directive can expand into cards.
+function renderResultNode(name, result, status) {
+  const w = el('div', '');
+  w.innerHTML = window.CerisierViews ? window.CerisierViews.renderResult(name || '', result || '', status || '') : '';
+  return unwrap(w);
 }
 
 function humanSize(n) {
@@ -346,7 +294,7 @@ function connectChat(conversationId) {
     details.open = true;
     details.dataset.toolCallId = data.id;
     details.appendChild(el('summary', '', `Tool call: ${data.name}${toolTarget(data.name, data.args)}`));
-    details.appendChild(toolCallBody(data.name, data.args));
+    appendNode(details, toolCallBody(data.name, data.args));
     const btns = el('div', 'tool-call-actions');
     const mkBtn = (label, msgType, always) => {
       const b = el('button', '', label);
@@ -378,20 +326,16 @@ function connectChat(conversationId) {
     const details = el('details', 'tool-call result ' + data.status);
     if (data.status !== 'succeeded') details.open = true; // timeouts, denials and failures must not hide in a collapsed card
     details.appendChild(el('summary', '', `Tool call${data.name ? ': ' + data.name + toolTarget(data.name, data.args) : ''} (${data.status})`));
-    if (data.args) details.appendChild(toolCallBody(data.name, data.args));
-    // Capture structured search results so the assistant's reply can render
-    // them as cards via a [[search:SOURCE]] directive instead of restating them.
-    try {
-      const parsed = JSON.parse(data.result || '{}');
-      const d = parsed && parsed.ok === true ? parsed.data : null;
-      if (d && d.type === 'search' && d.source) window.CERISIER_SEARCH_RESULTS[d.source] = d;
-    } catch (_) { /* not JSON */ }
-    details.appendChild(el('pre', '', data.result || ''));
+    if (data.args) appendNode(details, toolCallBody(data.name, data.args));
+    // Render the result via the views registry (drop the {ok,data} envelope; the card's
+    // border colour already conveys success vs failure). The registry also captures a
+    // search_* payload so the assistant's [[search:SOURCE]] directive can expand into cards.
+    appendNode(details, renderResultNode(data.name, data.result, data.status));
     parent.appendChild(details);
     // Files produced by a tool (write_file) get a download chip.
     try {
-      const f = JSON.parse(data.result || '{}').data;
-      if (f && f.file) parent.appendChild(el('div', 'attachments')).appendChild(fileChip(f.file));
+      const d = JSON.parse(data.result || '{}').data || {};
+      if (d.file) parent.appendChild(el('div', 'attachments')).appendChild(fileChip(d.file));
     } catch (_) { /* not JSON */ }
   }
 
@@ -497,29 +441,10 @@ function connectChat(conversationId) {
   };
 
   // ---- initial history render ------------------------------------------
-  // On reload the live capture map is empty; seed it from the raw JSON that the
-  // server already rendered inside each tool-result <pre> so [[search:SOURCE]]
-  // directives in the assistant's reply expand into cards.
-  log.querySelectorAll('.tool-call').forEach((d) => {
-    const pres = d.querySelectorAll('pre');
-    const res = pres.length ? pres[pres.length - 1].textContent : '';
-    try {
-      const p = JSON.parse(res);
-      const data = p && p.ok === true ? p.data : null;
-      if (data && data.type === 'search' && data.source) {
-        window.CERISIER_SEARCH_RESULTS[data.source] = data;
-      }
-    } catch (_) { /* not JSON */ }
-  });
-  // Turn each server-rendered replace_text args block into a coloured diff.
-  // Runs after the search seeding above, which reads the last <pre>.
-  log.querySelectorAll('.tool-call[data-tool-name="replace_text"] > pre.tool-args').forEach((pre) => {
-    const d = toolDiffHtml('replace_text', pre.textContent);
-    if (!d) return;
-    const w = el('div', '');
-    w.innerHTML = d;
-    pre.replaceWith(w);
-  });
+  // Render server-rendered history tool cards via the views registry. Runs
+  // before the [data-md] rich pass below, so it can seed window.CERISIER_SEARCH_RESULTS
+  // for [[search:SOURCE]] directives and turn replace_text args into a diff.
+  if (window.CerisierViews) window.CerisierViews.processReload(log);
   log.querySelectorAll('[data-md]').forEach((node) => {
     richInto(node, node.textContent);
     node.removeAttribute('data-md');

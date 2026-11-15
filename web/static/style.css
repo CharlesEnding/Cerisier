@@ -65,6 +65,20 @@ a { color: var(--accent); }
 .tool-call.result.denied, .tool-call.result.killed { border-left-color: #666; }
 .tool-call summary, .reasoning summary { cursor: pointer; }
 
+/* ---------- tool view renderers (web/static/views.js) ---------- */
+.tool-call > div { margin: 0.25rem 0; }
+.tool-view { font: 0.85rem/1.35 monospace; white-space: pre-wrap; word-break: break-word; }
+.tool-view-error { color: #ff7b72; }
+.tool-view-header { font-weight: 600; color: var(--muted); margin-bottom: 0.15rem; }
+.tool-view-meta { color: var(--muted); font-size: 0.8rem; margin-bottom: 0.2rem; }
+.tool-view-note { color: #e0a800; }
+.tool-view-status.ok { color: #7ee787; }
+.tool-view-status.bad { color: #ff7b72; }
+.tool-view-table { border-collapse: collapse; font: 0.83rem/1.2 monospace; width: 100%; }
+.tool-view-table th, .tool-view-table td { padding: 0.12rem 0.6rem; border-bottom: 1px solid var(--border); text-align: left; }
+.tool-view-table th { color: var(--muted); font-weight: 600; }
+.tool-view-pending { color: var(--muted); font-style: italic; }
+
 .sub-conversation { border-left: 3px solid #7ee787; padding-left: 0.5rem; margin: 0.5rem 0; }
 .reasoning { color: var(--muted); font-style: italic; border-left: 3px solid #666; padding-left: 0.5rem; }
 

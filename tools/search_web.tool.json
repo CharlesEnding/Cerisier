@@ -26,5 +26,6 @@
   },
   "timeout_ms": 30000,
   "permission": "auto",
+  "view": { "result": { "kind": "search" } },
   "path_args": []
 }

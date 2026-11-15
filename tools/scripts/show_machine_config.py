@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tool: machine_config. Args: {} (no parameters).
+"""Tool: show_machine_config. Args: {} (no parameters).
 Reports the dev machine's configuration: OS/version, kernel, CPU, RAM, and
 per-mount disk usage. Reads from the usual procfs/standard files rather than
 shelling out, so it needs no run_command approval. Each section is wrapped

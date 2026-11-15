@@ -1,8 +1,8 @@
 {
-  "name": "machine_config",
+  "name": "show_machine_config",
   "description": "Report the dev machine's config: OS/version/codename, kernel, arch, CPU, RAM usage, per-mount disk usage, and uptime.",
   "kind": "python",
-  "entrypoint": "tools/scripts/machine_config.py",
+  "entrypoint": "tools/scripts/show_machine_config.py",
   "input_schema": {
     "type": "object",
     "properties": {}
@@ -23,5 +23,6 @@
     }
   },
   "timeout_ms": 5000,
-  "permission": "auto"
+  "permission": "auto",
+  "view": { "renderer": "tools/scripts/show_machine_config.view.js", "result": { "kind": "show_machine_config" } }
 }

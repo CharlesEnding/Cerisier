@@ -28,6 +28,9 @@ type
     pathArgs*: seq[string]    ## names of input fields holding filesystem paths; used by the
                               ## auto_workdir gate to decide whether the call stays inside the
                               ## conversation's working directory
+    viewJson*: string         ## raw JSON of the manifest's optional "view" block, describing
+                              ## how the chat client renders this tool's args/result (see views.js).
+                              ## Empty string when the tool declares none.
 
   ToolCallStatus* = enum
     tcsPendingApproval = "pending_approval"

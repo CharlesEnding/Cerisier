@@ -50,5 +50,6 @@
     }
   },
   "timeout_ms": 10000,
-  "permission": "auto"
+  "permission": "auto",
+  "view": { "result": { "kind": "text", "field": "content", "note": "truncated" } }
 }

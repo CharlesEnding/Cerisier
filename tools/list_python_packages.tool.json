@@ -21,5 +21,6 @@
     }
   },
   "timeout_ms": 10000,
-  "permission": "auto"
+  "permission": "auto",
+  "view": { "result": { "kind": "table", "rows": "packages", "count": "count", "note": "truncated", "columns": [{ "field": "name", "label": "Package" }, { "field": "version", "label": "Version" }] } }
 }

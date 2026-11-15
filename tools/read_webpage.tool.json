@@ -78,6 +78,7 @@
   },
   "timeout_ms": 45000,
   "permission": "ask",
+  "view": { "result": { "kind": "text", "field": "content", "header": "title", "note": "truncated" } },
   "path_args": [
     "output_path"
   ]

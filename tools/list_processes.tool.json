@@ -54,5 +54,6 @@
     }
   },
   "timeout_ms": 5000,
-  "permission": "auto"
+  "permission": "auto",
+  "view": { "result": { "kind": "table", "rows": "processes", "count": "count", "note": "truncated", "columns": [{ "field": "pid", "label": "PID" }, { "field": "user", "label": "User" }, { "field": "cpu", "label": "CPU" }, { "field": "mem", "label": "Mem" }, { "field": "stat", "label": "Stat" }, { "field": "command", "label": "Command" }] } }
 }

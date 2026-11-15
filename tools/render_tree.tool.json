@@ -53,6 +53,7 @@
   },
   "timeout_ms": 5000,
   "permission": "auto",
+  "view": { "result": { "kind": "text", "field": "tree", "header": "path", "note": "truncated" } },
   "path_args": [
     "path"
   ]

@@ -14,4 +14,11 @@
 * Tools that we allow us to reduce user asks:
     * SQL select interface
 
-* Introspection tool: explore previous conversations, find long reasoning that are susceptible to be repeated, add internal docs for this topic
+* learn skill: Introspection tool: explore previous conversations, find long reasoning that are susceptible to be repeated, add internal docs for this topic
+* query docs tool
+    docsets (dash, zeal, devdocs.io)
+    versions
+* read file outline for code w/ line numbers
+* Replace text with splits:
+    Before old-> new but one character mismatch breaks it
+    After start of old, end of old -> new, only the anchors have to match

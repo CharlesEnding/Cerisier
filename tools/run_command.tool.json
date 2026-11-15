@@ -19,5 +19,6 @@
     }
   },
   "timeout_ms": 30000,
-  "permission": "ask"
+  "permission": "ask",
+  "view": { "result": { "kind": "text", "field": "output", "status": "exit_code", "note": "truncated" } }
 }

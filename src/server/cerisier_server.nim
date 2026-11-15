@@ -69,6 +69,7 @@ when isMainModule:
   app.post("/formats/new", formatsNewPost)
   app.get("/ws/chat/{id}", wsChat)
   app.get("/static/{file}", staticAsset)
+  app.get("/views/{name}", viewGet)
   app.get("/v1/models", v1Models)
   app.post("/v1/chat/completions", v1ChatCompletions)
 

@@ -49,6 +49,7 @@
   },
   "timeout_ms": 5000,
   "permission": "ask",
+  "view": { "args": { "kind": "diff" } },
   "path_args": [
     "path"
   ]

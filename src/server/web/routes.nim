@@ -49,6 +49,17 @@ proc staticAsset*(ctx: Context) {.async, gcsafe.} =
   let filename = ctx.getPathParams("file")
   await staticFileResponse(ctx, filename, s.staticDir)
 
+proc viewGet*(ctx: Context) {.async, gcsafe.} =
+  ## Serve a tool's custom view renderer file (see views.js / "view.renderer").
+  ## The on-disk path is read from the manifest, never from the request, so a
+  ## request can't reach files the tool didn't declare.
+  let s = getState()
+  let abs = s.toolRegistry.viewRendererPath(ctx.getPathParams("name"))
+  if abs.len == 0 or not fileExists(abs):
+    resp plainTextResponse("no view renderer", Http404)
+    return
+  await staticFileResponse(ctx, extractFilename(abs), parentDir(abs), "application/javascript")
+
 proc escapeHtml(s: string): string =
   result = newStringOfCap(s.len)
   for c in s:
@@ -303,6 +314,8 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
   let wd = s.db.getConversationWorkingDir(currentId)
   ## Embedded in a <script>: make sure model-written text can't close the tag.
   let formatsScript = formatsJson(s.db).replace("<", "\\u003c")
+  ## Per-tool "view" declarations for web/static/views.js (window.CERISIER_VIEWS).
+  let viewsScript = s.toolRegistry.viewsJson().replace("<", "\\u003c")
 
   let body = &"""
   {banner}
@@ -332,6 +345,7 @@ proc renderChatPage(ctx: Context, requestedId: Option[int64]) {.async, gcsafe.} 
     </form>
   </div>
   <script>window.CERISIER_FORMATS = {formatsScript};</script>
+  <script>window.CERISIER_VIEWS = {viewsScript};</script>
   <script>connectChat({currentId});</script>
   """
   resp htmlResponse(page("Chat", "/", body))
@@ -513,6 +527,7 @@ proc manifestFromForm(ctx: Context): ToolManifest =
     outputSchema: ctx.getFormParams("output_schema"),
     timeoutMs: parseInt(ctx.getFormParams("timeout_ms")),
     permission: parseEnum[ToolPermission](ctx.getFormParams("permission")),
+    viewJson: "",
   )
 
 proc toolsNewPost*(ctx: Context) {.async, gcsafe.} =

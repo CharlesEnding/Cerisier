@@ -83,13 +83,14 @@ if __name__ == "__main__":
 | `timeout_ms` | no | Hard kill timeout; small for quick tools (`5000`), larger for network/heavy work. |
 | `permission` | no | `"auto"`, `"ask"` (default), or `"auto_workdir"` — see the Permission section. |
 | `path_args` | no | Input arg names that are filesystem paths (e.g. `["input_path", "output_path"]`). Gates the working-dir scope for `auto_workdir`; shapes the prompt for `ask`; ignored by `auto`. |
+| `view` | no | How the chat UI renders the args/result for the **human**. Omit for the default pretty-JSON. See the **Rendering the result for the human** section. |
 
 ## Permission: `auto`, `ask`, and `auto_workdir`
 
 This is the approval gate, and the main reason a dedicated tool exists instead of the approval-gated `run_command`.
 
 - **`"ask"` (default)** — the harness shows the call and waits for the user to approve before running it. Use for anything that writes, deletes, installs, or is otherwise hard to undo: `write_local_file`, `run_command`, `run_python`, the image/PDF writers, `screenshot`, `read_webpage`.
-- **`"auto"`** — the harness validates the args against `input_schema` and runs immediately, with no chat prompt. Use for **read-only, side-effect-free** operations: `check_installed`, `machine_config`, `list_dir`, `render_tree`, `git_read`, `list_processes`, `list_python_packages`, the `search_*` tools.
+- **`"auto"`** — the harness validates the args against `input_schema` and runs immediately, with no chat prompt. Use for **read-only, side-effect-free** operations: `check_installed`, `show_machine_config`, `list_dir`, `render_tree`, `git_read`, `list_processes`, `list_python_packages`, the `search_*` tools.
 - **`"auto_workdir"`** — auto-runs when the paths in `path_args` resolve **inside the working directory**; anything outside falls back to the approval prompt. This is how a tool that reads user files (`read_local_file`) stays frictionless for normal work without granting blanket file access. It is the one permission where `path_args` actually gates behaviour.
 
 Choosing the value: read-only and touches nothing user-owned → `auto`; reads arbitrary files the user may not own → `auto_workdir`; writes/installs/irreversible → `ask`.
@@ -131,9 +132,68 @@ The resulting manifest declares the same input options as grep — `pattern`, `i
 Following the existing tools makes the `output_schema` easy to write and keeps results predictable:
 
 - **Listing / searching tools** end with `count` (number returned) and `truncated` (more exist than were returned): `list_dir`, `render_tree`, `list_processes`, `list_python_packages`, `search_files`.
-- **The `search_*` family** (web, github, steam, youtube) share a card shape — `required: ["type", "source", "query", "results", "text"]`, with `results` an array of objects. These are the only tools whose results the UI renders as embed cards via a `[[search:…]]` directive line.
+- **The `search_*` family** (web, github, steam, youtube) share a card shape — `required: ["type", "source", "query", "results", "text"]`, with `results` an array of objects. These are the only tools whose results the UI renders as embed cards via a `[[search:…]]` directive line (wired by the `search` result kind — see **Rendering the result for the human**).
 - **File-writing tools** report what changed on disk: `bytes_written` (`write_local_file`, `write_tmp_file`) or an `output_path` plus size/page counts (`pdf_*`, image tools).
 - A `path` echoing the input is a common `required` field for path-based tools.
+
+## Rendering the result for the human (`view`)
+
+The `{ok, data}` envelope the script prints is what the **model** reads back — it is not what the **human** sees in the chat. A tool can declare a separate `view` block in its manifest that tells the web UI how to present the same `data` as readable HTML. Without a `view`, both the args and the result render as pretty-printed JSON (the default `json` kind), and a failed call shows its `error` text. This is the right default for a brand-new tool; only add a `view` when the raw shape is hard to read.
+
+How it's wired, end to end:
+
+1. The manifest's `view` block is parsed by the registry (`registry.nim`) and shipped to the chat page as `window.CERISIER_VIEWS` — a name → view map built from every tool's declared view.
+2. `web/static/views.js` is the presentation registry. For each tool call it turns `(name, args, result)` into HTML by looking up the tool's declared `kind`.
+3. A kind that isn't built in is a **custom kind**: the tool ships a renderer file that registers it, loaded lazily on first use.
+
+A `view` declares two independent slots, each with a `kind`. The slot fields (`rows`, `columns`, `header`, `count`, `note`, `field`, …) are read from the tool's `data` object, so they name keys in your output — `list_dir` sets `rows: "entries"` because its `data` has an `entries` array:
+
+```json
+"view": {
+  "args":   { "kind": "text", "field": "command" },
+  "result": { "kind": "table", "rows": "entries", "count": "count", "note": "truncated",
+              "columns": [{ "field": "name", "label": "Name", "format": "type" },
+                          { "field": "size", "label": "Size", "format": "size" }] }
+}
+```
+
+A slot that is omitted falls back to `json`.
+
+Built-in kinds:
+
+- `json` — pretty-printed value (the default for both slots).
+- `text` — a single string field (`field`), with optional `header` (a `data` key shown as a title), `status` (a `data` key shown as `exit N`) and `note` (a `data` boolean flagging truncation).
+- `table` — `rows` (a `data` array) plus `columns` (`field`, `label`, optional `format` of `size` or `type`), with optional `header`, `count`, `note`. This is what makes `list_dir` and `list_python_packages` render as tables.
+- `diff` — args slot: renders `old`/`new` as a line diff. Used by `replace_text`.
+- `search` — the `search_*` family; renders `results` as embed cards and lets the assistant's `[[search:source]]` directive expand them.
+
+A `kind` not in this list is **custom**: the tool ships a renderer file and points at it.
+
+```json
+"view": { "renderer": "tools/scripts/foo.view.js", "result": { "kind": "foo" } }
+```
+
+The file is served at `/views/<name>` (the on-disk path comes from the manifest, never from the request, so a request can't reach an undeclared file). When a slot first needs the kind, `views.js` loads the file and it registers itself:
+
+```js
+(function () {
+  const V = window.CerisierViews; if (!V) return;
+  V.registerCss('foo', `.foo { /* namespaced CSS; registerCss dedupes by name */ }`);
+  V.register('foo', function (ctx) {
+    // ctx.data is the tool's `data` object — the same payload the model sees.
+    // ctx also carries { name, target, argsJson, args, ok, status }.
+    // You must escape any text you emit — the returned HTML is injected verbatim.
+    return '<div class="tool-view foo">…</div>';
+  });
+})();
+```
+
+`show_machine_config` (`tools/scripts/show_machine_config.view.js`) is the working example: a custom kind plus its own namespaced CSS.
+
+Two things to keep in mind when writing a renderer:
+
+- **A slot's HTML is several sibling elements, and all of them are kept.** A `table` emits a header div, a meta line, and the `<table>`. The UI keeps *every* top-level child of the rendered slot, not just the first — so you're free to return multiple sibling elements. The registry used to keep only `w.firstChild`, which silently dropped everything after a `table`'s first element; the invariant now is to attach all children (`replaceWith(...w.childNodes)` or a fragment of all children, never `w.firstChild`).
+- **Renderers escape their own output.** `views.js` exposes helpers (`CerisierViews.register`, `registerCss`, `humanSize`, …) but not an `esc`; every renderer — built-in or custom — must escape text before putting it into HTML.
 
 ## Testing a new tool
 
@@ -161,4 +221,5 @@ The registry reads the `tools/` directory at startup. After adding the manifest 
 - [ ] Script reads `sys.argv[1]`, handles missing/bad args, prints exactly one `{"ok": …}` line.
 - [ ] Any external command is invoked with a **list of args**, never `shell=True`.
 - [ ] `permission` chosen right: `auto` only if read-only and side-effect-free; `auto_workdir` if it reads user files by path; `ask` if it writes or is hard to undo.
+- [ ] (Optional) `view` block set when pretty-JSON is hard to read: a `table` for lists, a custom renderer for a bespoke layout.
 - [ ] Tested from the command line with a valid and an invalid call.

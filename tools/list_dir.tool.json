@@ -53,6 +53,7 @@
   },
   "timeout_ms": 5000,
   "permission": "auto",
+  "view": { "result": { "kind": "table", "header": "path", "rows": "entries", "count": "count", "note": "truncated", "columns": [{ "field": "name", "label": "Name", "format": "type" }, { "field": "size", "label": "Size", "format": "size" }] } },
   "path_args": [
     "path"
   ]

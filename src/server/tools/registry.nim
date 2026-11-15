@@ -28,6 +28,9 @@ proc parsePathArgs(node: JsonNode): seq[string] =
         result.add(e.getStr())
 
 proc parseManifest(node: JsonNode): ToolManifest =
+  var viewJson = ""
+  if node.hasKey("view"):
+    viewJson = $node["view"]
   ToolManifest(
     name: node{"name"}.getStr(""),
     description: node{"description"}.getStr(""),
@@ -38,6 +41,7 @@ proc parseManifest(node: JsonNode): ToolManifest =
     timeoutMs: node{"timeout_ms"}.getInt(30_000),
     permission: parsePermission(node),
     pathArgs: parsePathArgs(node),
+    viewJson: viewJson,
   )
 
 proc scanToolsDir*(dir: string): seq[ToolManifest] =
@@ -86,6 +90,8 @@ proc saveManifest*(reg: ToolRegistry, m: ToolManifest) =
     "permission": $m.permission,
     "path_args": m.pathArgs,
   }
+  if m.viewJson.len > 0:
+    node["view"] = (try: parseJson(m.viewJson) except CatchableError: newJObject())
   writeFile(reg.manifestPath(m.name), node.pretty())
   reg.reload()
 
@@ -100,6 +106,36 @@ proc find*(reg: ToolRegistry, name: string): ToolManifest =
     if t.name == name:
       return t
   raise newException(KeyError, "unknown tool: " & name)
+
+proc viewsJson*(reg: ToolRegistry): string =
+  ## name -> the raw "view" JSON block, for the chat client (window.CERISIER_VIEWS).
+  ## Tools with no view block are omitted; the client uses its default for those.
+  let res = newJObject()
+  for t in reg.tools:
+    if t.viewJson.len == 0:
+      continue
+    let v = try: parseJson(t.viewJson) except CatchableError: newJObject()
+    res[t.name] = v
+  $(res)
+
+proc viewRendererPath*(reg: ToolRegistry, name: string): string =
+  ## Resolve the manifest "view.renderer" path (project-relative, like entrypoint)
+  ## for a tool to an absolute on-disk path, or "" if the tool ships no renderer.
+  var m: ToolManifest
+  try:
+    m = reg.find(name)
+  except KeyError:
+    return ""
+  if m.viewJson.len == 0:
+    return ""
+  let view = try: parseJson(m.viewJson) except CatchableError: newJObject()
+  if view.kind != JObject or not view.hasKey("renderer"):
+    return ""
+  let rel = view["renderer"].getStr("")
+  if rel.len == 0 or rel.contains(".."):
+    return ""
+  let root = reg.dir.parentDir()
+  result = root / rel
 
 proc toolCallPreamble*(): seq[string] =
   ## The exact `<tool_call>` syntax the model must use (shared by the plain

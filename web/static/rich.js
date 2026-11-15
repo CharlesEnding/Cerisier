@@ -570,5 +570,5 @@ function render(src) {
   }
 }
 
-global.CerisierRich = { render, highlight, esc };
+global.CerisierRich = { render, highlight, esc, searchCardsHtml };
 })(typeof window !== 'undefined' ? window : globalThis);
