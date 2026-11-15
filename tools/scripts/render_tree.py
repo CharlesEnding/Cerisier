@@ -33,7 +33,7 @@ def main():
 
     # Root label (counted against max_entries).
     root_label = os.path.basename(os.path.abspath(path)) or path
-    lines.append(root_label)
+    lines.append(root_label + "/")
     state["count"] += 1
 
     def walk(current, depth):

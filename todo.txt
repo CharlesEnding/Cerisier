@@ -16,11 +16,4 @@
 * Fix multiple tool calls only getting one result by the harness
 * Try passing entire reasoning instead of only since last user message.
 * render call outputs client side (no more \n), fallback to rendering json
-
-* Fix render tree output:
-  Tool call: render_tree /persistent/Cerisier/src (succeeded)
-
-  {"dirs_only":true,"max_depth":6,"path":"/persistent/Cerisier/src"}
-
-  {"ok":true,"data":{"path":"/persistent/Cerisier/src","tree":"src\n  common/\n  server/\n    agent/\n    api/\n    db/\n    files/\n    formats/\n    skills/\n    tools/\n    web/","count":11,"truncated":false}}
 * Maybe fix reasoning render client side (numbered and nonnumbered lists)
