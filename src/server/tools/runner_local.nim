@@ -8,7 +8,7 @@
 ## blocking the whole event loop for the tool's entire runtime — that's
 ## what makes a manual "kill this tool call" request from chat possible.
 
-import std/[osproc, streams, os]
+import std/[osproc, os, posix]
 import ../../common/types
 
 proc startLocal*(manifest: ToolManifest, argsJson: string, cwd: string = ""): Process =
@@ -36,21 +36,21 @@ proc startLocal*(manifest: ToolManifest, argsJson: string, cwd: string = ""): Pr
   ## this, never the model, so the model can't steer it by lying about a path.
   ## When cwd is "" (unset) we pass the empty env/dir defaults so the child
   ## inherits the server's environment and working directory exactly as before.
-  startProcess(cmd, args = cmdArgs, workingDir = cwd, options = {poUsePath, poStdErrToStdOut})
+  let p = startProcess(cmd, args = cmdArgs, workingDir = cwd, options = {poUsePath, poStdErrToStdOut})
+  # Output is drained while the child runs; a blocking read would stall the event loop.
+  let fd = p.outputHandle.cint
+  discard fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) or O_NONBLOCK)
+  p
 
-proc readAndClose*(p: Process, maxBytes: int = 1_000_000): string =
-  ## Drains whatever output the (already-exited, or just-killed) process
-  ## produced. Reads in bounded chunks from the output stream rather than
-  ## `outputStream.readAll()`'s unbounded slurp, capped
-  ## so a runaway/huge-output child can never exhaust memory here.
-  defer: p.close()
-  var output = ""
-  let stream = p.outputStream
+proc drainOutput*(p: Process, output: var string, maxBytes: int = 1_000_000) =
+  ## Takes whatever the child has written so far. Keeps reading past `maxBytes`
+  ## (discarding) so a chatty child never fills the pipe and blocks.
   var chunk = newString(8192)
-  while output.len < maxBytes:
-    let n = stream.readData(addr chunk[0], chunk.len)
+  while true:
+    let n = posix.read(p.outputHandle, addr chunk[0], chunk.len)
     if n <= 0:
       break
-    output.add(chunk[0 ..< n])
-  output
+    let room = maxBytes - output.len
+    if room > 0:
+      output.add(chunk[0 ..< min(n, room)])
 

@@ -13,7 +13,6 @@
 * Request decision or info from human -> shows text field
 * Tools that we allow us to reduce user asks:
     * SQL select interface
-* auto for /tmp reads
 * ps aux grep tool
 * read tmp file
 * date time

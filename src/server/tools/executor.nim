@@ -10,10 +10,10 @@
 ## Every tool runs on this machine, spawned via osproc (runner_local).
 ##
 ## `execute()` is async so a running tool call can be interrupted by a manual
-## "kill" request from chat: the wait loops yield via `sleepAsync` between
+## "kill" request from chat: the wait loops yield via `wakeAfter` between
 ## polls instead of blocking the whole event loop for the tool's runtime.
 
-import std/[json, tables, strutils, asyncdispatch, options, osproc, os]
+import std/[json, tables, strutils, asyncdispatch, options, osproc, os, monotimes, times]
 import ../db/database
 import ../../common/types
 import ./registry
@@ -209,6 +209,15 @@ proc finishWithOutput(ex: ToolExecutor, toolCallId: int64, manifest: ToolManifes
 
   ex.db.setToolCallResult(toolCallId, $tcsSucceeded, $(%*{"ok": true, "data": dataNode}))
 
+proc wakeAfter(ms: int): Future[void] =
+  ## `sleepAsync` timers only run when something else wakes httpx's loop (about once a
+  ## second); a timerfd-backed timer wakes it on time.
+  let fut = newFuture[void]("wakeAfter")
+  addTimer(ms, true, proc(fd: AsyncFD): bool {.gcsafe.} =
+    fut.complete()
+    true)
+  fut
+
 proc executeLocally(ex: ToolExecutor, convId, toolCallId: int64, manifest: ToolManifest, argsJson: string) {.async.} =
   ex.db.setToolCallStatus(toolCallId, $tcsRunning)
   ## The subprocess runs with cwd = the conversation's working directory (when
@@ -218,25 +227,27 @@ proc executeLocally(ex: ToolExecutor, convId, toolCallId: int64, manifest: ToolM
   let p = startLocal(manifest, argsJson, ex.workingDirFor(convId))
   ex.runningProcesses[toolCallId] = p
 
-  var waited = 0
+  let started = getMonoTime()
   const stepMs = 50
+  var output = ""
   var killed = false
   var timedOut = false
   while p.running():
+    p.drainOutput(output)
     if ex.killRequested.getOrDefault(toolCallId, false):
       p.kill()
       killed = true
       break
-    if waited >= manifest.timeoutMs:
+    if (getMonoTime() - started).inMilliseconds >= manifest.timeoutMs:
       p.kill()
       timedOut = true
       break
-    await sleepAsync(stepMs)
-    waited += stepMs
+    await wakeAfter(stepMs)
 
   ex.runningProcesses.del(toolCallId)
   ex.killRequested.del(toolCallId)
-  let output = readAndClose(p)
+  p.drainOutput(output)
+  p.close()
 
   if killed:
     ex.db.setToolCallResult(toolCallId, $tcsKilled, failure("killed by user"))
