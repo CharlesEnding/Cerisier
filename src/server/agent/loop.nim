@@ -50,11 +50,20 @@ proc buildHistory*(env: LoopEnv, convId: int64, visionOk: bool): seq[ChatMsg] =
   let sys = buildSystemPrompt(env.db, env.registry, convId, env.promptFile)
   if sys.len > 0:
     result.add(chatMsg("system", sys))
-  for (mid, parentId, role, msgContent, _) in env.db.messagesForConversation(convId):
-    if parentId.len > 0:
-      continue
+  var rows: seq[(int64, string, string, string, string)] = @[]
+  var lastUser = -1
+  for row in env.db.messagesForConversation(convId):
+    if row[1].len == 0:
+      if row[2] == "user":
+        lastUser = rows.len
+      rows.add(row)
+  var pendingReasoning = ""
+  for i, (mid, parentId, role, msgContent, _) in rows:
     if role == "reasoning":
-      continue ## not a valid chat-completions role; kept in the DB only for display
+      # The backend keeps every reasoning it is sent, so only the current turn's goes back.
+      if i > lastUser:
+        pendingReasoning.add(msgContent)
+      continue
     if role == "user":
       let text = msgContent
       let att = describeAttachments(env.db, env.dataDir, mid, visionOk)
@@ -63,7 +72,11 @@ proc buildHistory*(env: LoopEnv, convId: int64, visionOk: bool): seq[ChatMsg] =
       else:
         result.add(chatMsg(role, text))
       continue
-    result.add(chatMsg(role, if role == "assistant": dropLeadingStamps(msgContent) else: msgContent))
+    var msg = chatMsg(role, if role == "assistant": dropLeadingStamps(msgContent) else: msgContent)
+    if role == "assistant":
+      msg.reasoning = pendingReasoning
+      pendingReasoning = ""
+    result.add(msg)
 
 proc runBuiltinCall(env: LoopEnv, convId, assistantMsgId: int64, hooks: AgentHooks,
                     toolName, argsJson: string): string =
