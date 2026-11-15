@@ -16,3 +16,4 @@
 
 * read tmp file
 * date time
+* Introspection tool: explore previous conversations, find long reasoning that are susceptible to be repeated, add internal docs for this topic

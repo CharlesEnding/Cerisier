@@ -15,7 +15,7 @@
 * Fix duplicated date, don't include it in the context, maybe in reasoning, who knows
 * Fix multiple tool calls only getting one result by the harness
 * Try passing entire reasoning instead of only since last user message.
-* render call outputs client side (no more \n)
+* render call outputs client side (no more \n), fallback to rendering json
 
 * Fix render tree output:
   Tool call: render_tree /persistent/Cerisier/src (succeeded)

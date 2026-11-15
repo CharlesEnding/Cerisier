@@ -1,0 +1,33 @@
+{
+  "name": "get_date_time",
+  "description": "Return the current date and time, optionally in a specific timezone or format.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/get_date_time.py",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "format": {
+        "type": "string",
+        "description": "Python strftime format string (e.g. \"%Y-%m-%d %H:%M:%S\"). Defaults to ISO 8601."
+      },
+      "timezone": {
+        "type": "string",
+        "description": "IANA timezone name (e.g. \"Europe/Paris\", \"UTC\"). Defaults to the system local timezone."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": ["date", "time", "datetime", "timestamp", "timezone"],
+    "properties": {
+      "date": {"type": "string", "description": "Date portion, e.g. \"2025-01-15\"."},
+      "time": {"type": "string", "description": "Time portion, e.g. \"14:30:05\"."},
+      "datetime": {"type": "string", "description": "Formatted datetime using the requested format."},
+      "timestamp": {"type": "number", "description": "Unix timestamp (seconds since epoch)."},
+      "timezone": {"type": "string", "description": "The timezone used (IANA name or offset)."},
+      "day_of_week": {"type": "string", "description": "Day of the week name, e.g. \"Monday\"."}
+    }
+  },
+  "timeout_ms": 3000,
+  "permission": "auto"
+}

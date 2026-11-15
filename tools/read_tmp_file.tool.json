@@ -1,0 +1,54 @@
+{
+  "name": "read_tmp_file",
+  "description": "Read a scratch file under /tmp/cerisier/ (written by write_tmp_file). Replaces shell file reading for scratch files, so never use run_command for it: `cat f` -> name only; `sed -n 'N,Mp' f` -> start_line=N, end_line=M; `head -n N f` -> end_line=N; `tail -n N f` -> read the file, or use search_files to find the line you need and request that range; `cat -n f` -> line_numbers=true; `head -c N f` / `tail -c +N f` -> length / offset (bytes). Line ranges are 1-based and inclusive. Names that escape /tmp/cerisier/ are rejected; runs without approval.",
+  "kind": "python",
+  "entrypoint": "tools/scripts/read_tmp_file.py",
+  "input_schema": {
+    "type": "object",
+    "required": [
+      "name"
+    ],
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "File name relative to /tmp/cerisier/, e.g. \"scan.py\" or \"job1/out.txt\"."
+      },
+      "offset": {
+        "type": "integer",
+        "description": "Byte offset to start reading from (default 0)."
+      },
+      "length": {
+        "type": "integer",
+        "description": "Max bytes to read (default and cap 1048576)."
+      },
+      "line_numbers": {
+        "type": "boolean",
+        "description": "Prefix each returned line with its 1-based line number (default false)."
+      },
+      "start_line": {
+        "type": "integer",
+        "description": "First line to return, 1-based (like sed -n 'N,Mp'). Overrides offset/length."
+      },
+      "end_line": {
+        "type": "integer",
+        "description": "Last line to return, inclusive (default end of file)."
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "required": [
+      "content"
+    ],
+    "properties": {
+      "content": {
+        "type": "string"
+      },
+      "truncated": {
+        "type": "boolean"
+      }
+    }
+  },
+  "timeout_ms": 10000,
+  "permission": "auto"
+}
