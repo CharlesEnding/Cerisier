@@ -12,7 +12,6 @@
 14. Command summary. A command tool call should explain what it does and whether it's safe.
 
 * Fix bing search (adversarial garbage data return, choose another provider)
-* render call outputs client side (no more \n), fallback to rendering json
 * Maybe fix reasoning render client side (numbered and nonnumbered lists)
 * Handle empty replies:
   [11:01:38] ERROR ws: conversation 63 got an EMPTY reply from the model: model returned an empty reply — check server logs
