@@ -17,10 +17,5 @@
 
 
 Priority:
-* Ask question tool that takes in an answer -> shows text field
 * SQL select interface (read without permission)
-* Read file outline for code w/ line numbers
-* Replace text with line delimitations:
-    Before old-> new but one character mismatch breaks it
-    After start line of old, end line of old -> new
 * Build tool customized per project

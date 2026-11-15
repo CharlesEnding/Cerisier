@@ -1,13 +1,12 @@
 {
   "name": "replace_text",
-  "description": "Replace exact occurrences of `old` with `new` in a file (read-modify-write). Refuses if `old` is empty or absent. count = number of replacements (default 1; -1 = all). Writes to disk, so it requires approval.",
+  "description": "Replace text in a file (read-modify-write). Two modes: (1) give `old` (exact substring to find) and `new`; (2) give `start_line` and `end_line` (verbatim first/last line of the block to replace) and `new` — the tool locates the block by those two boundary lines and replaces everything between them inclusive, avoiding single-character whitespace mismatches on large blocks. count = number of replacements (default 1; -1 = all). Refuses if the target is not found. Writes to disk, so it requires approval.",
   "kind": "python",
   "entrypoint": "tools/scripts/replace_text.py",
   "input_schema": {
     "type": "object",
     "required": [
       "path",
-      "old",
       "new"
     ],
     "properties": {
@@ -16,7 +15,15 @@
       },
       "old": {
         "type": "string",
-        "description": "Exact substring to find (must not be empty)."
+        "description": "Exact substring to find (must not be empty). Mutually exclusive with start_line/end_line."
+      },
+      "start_line": {
+        "type": "string",
+        "description": "Verbatim content of the first line of the block to replace (not a line number). Pair with end_line. Mutually exclusive with old."
+      },
+      "end_line": {
+        "type": "string",
+        "description": "Verbatim content of the last line of the block to replace. Must be used with start_line."
       },
       "new": {
         "type": "string",

@@ -1,11 +1,34 @@
 #!/usr/bin/env python3
-"""Tool: replace_text. Replace exact occurrences of `old` with `new` in a file
-(read-modify-write). Refuses if `old` is empty or absent so an accidental
-no-op or a wrong find never silently writes. Writes to disk, so this tool is
-`permission: ask` by design."""
+"""Tool: replace_text. Replace text in a file (read-modify-write).
+Two modes: (1) exact substring via `old`; (2) block delimited by `start_line`
+and `end_line` (verbatim first/last line of the block). Refuses if the target
+is absent so an accidental no-op or a wrong find never silently writes.
+Writes to disk, so this tool is `permission: ask` by design."""
 import difflib
 import json
 import sys
+
+
+def find_line_blocks(content, start_line, end_line):
+    """Find all (start_idx, end_idx) line-index pairs where content has
+    a block delimited by start_line and end_line (inclusive, exact match
+    on the full line content)."""
+    lines = content.split("\n")
+    blocks = []
+    i = 0
+    while i < len(lines):
+        if lines[i] == start_line:
+            for j in range(i, len(lines)):
+                if lines[j] == end_line:
+                    blocks.append((i, j))
+                    i = j + 1
+                    break
+            else:
+                # start_line found but no matching end_line after it
+                return None
+        else:
+            i += 1
+    return blocks
 
 
 def closest_hint(content, old):
@@ -51,14 +74,30 @@ def main():
         return
     try:
         path = args["path"]
-        old = args["old"]
         new = args["new"]
     except KeyError as e:
         print(json.dumps({"ok": False, "error": f"missing required argument: {e}"}))
         return
 
-    if old == "":
-        print(json.dumps({"ok": False, "error": "old must not be empty"}))
+    old = args.get("old")
+    start_line = args.get("start_line")
+    end_line = args.get("end_line")
+
+    # Validate locator mode: exactly one of (old) or (start_line + end_line)
+    if old is not None and (start_line is not None or end_line is not None):
+        print(json.dumps({"ok": False, "error": "Provide either 'old' or 'start_line'+'end_line', not both."}))
+        return
+    if start_line is not None and end_line is None:
+        print(json.dumps({"ok": False, "error": "start_line requires end_line."}))
+        return
+    if end_line is not None and start_line is None:
+        print(json.dumps({"ok": False, "error": "end_line requires start_line."}))
+        return
+    if old is None and start_line is None:
+        print(json.dumps({"ok": False, "error": "Provide 'old' or both 'start_line' and 'end_line'."}))
+        return
+    if old is not None and old == "":
+        print(json.dumps({"ok": False, "error": "old must not be empty."}))
         return
 
     try:
@@ -77,18 +116,41 @@ def main():
         print(json.dumps({"ok": False, "error": f"cannot read file: {e}"}))
         return
 
-    total = content.count(old)
-    if total == 0:
-        hint = closest_hint(content, old)
-        print(json.dumps({"ok": False, "error": f"'old' not found in {path}.{hint}"}))
-        return
-
-    if count == -1:
-        new_content = content.replace(old, new)
-        replaced = total
+    if old is not None:
+        # --- Mode 1: exact substring ---
+        total = content.count(old)
+        if total == 0:
+            hint = closest_hint(content, old)
+            print(json.dumps({"ok": False, "error": f"'old' not found in {path}.{hint}"}))
+            return
+        if count == -1:
+            new_content = content.replace(old, new)
+            replaced = total
+        else:
+            new_content = content.replace(old, new, count)
+            replaced = min(count, total)
     else:
-        new_content = content.replace(old, new, count)
-        replaced = min(count, total)
+        # --- Mode 2: start_line / end_line block ---
+        blocks = find_line_blocks(content, start_line, end_line)
+        if blocks is None:
+            hint = closest_hint(content, start_line)
+            print(json.dumps({"ok": False, "error": f"start_line found but no matching end_line after it in {path}.{hint}"}))
+            return
+        total = len(blocks)
+        if total == 0:
+            hint = closest_hint(content, start_line)
+            print(json.dumps({"ok": False, "error": f"start_line not found in {path}.{hint}"}))
+            return
+
+        to_replace = total if count == -1 else min(count, total)
+        lines = content.split("\n")
+        # Replace from bottom to top so earlier indices don't shift
+        selected = blocks[:to_replace]
+        selected_sorted = sorted(selected, key=lambda b: b[0], reverse=True)
+        for (si, ei) in selected_sorted:
+            lines[si:ei + 1] = new.split("\n")
+        new_content = "\n".join(lines)
+        replaced = to_replace
 
     try:
         with open(path, "w") as f:
