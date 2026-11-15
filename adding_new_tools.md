@@ -5,7 +5,7 @@ A tool is two files that live together in this repo:
 1. A **manifest** — `tools/<name>.tool.json` — a small JSON description the harness reads to expose the tool to the model (name, schema, approval policy).
 2. An **implementation** — `tools/scripts/<name>.py` — a Python script that does the actual work and prints a JSON result.
 
-The tool registry scans `tools/` for `*.tool.json` at startup and, for each one, registers the manifest's `name` as the callable tool. So adding files is the whole act of adding a tool.
+The tool registry scans `tools/` for `*.tool.json` at startup and, for each one, registers the manifest's `name` as the callable tool. So adding files is the whole act of adding a tool. The name of the tool shall start with a verb (e.g: list_processes not process_list).
 
 ## How a tool runs
 
@@ -79,21 +79,22 @@ if __name__ == "__main__":
 | `kind` | yes | Currently `"python"`. |
 | `entrypoint` | yes | Path **relative to the project root**, e.g. `tools/scripts/foo.py`. The registry resolves it from the parent of `tools/`, so write it exactly like this. |
 | `input_schema` | yes | JSON Schema object. `required` lists mandatory args; give every arg a `description`. |
-| `output_schema` | yes | Shape of the `data` object. Validation is structural (types, `required`) over one level of nesting. |
+| `output_schema` | yes | Shape of the `data` object. The harness checks declared `type`s and `required` keys; object/array shapes that omit `properties`/`items` are not deep-validated, and `required` itself is optional. Keep it faithful to what you actually return. |
 | `timeout_ms` | no | Hard kill timeout; small for quick tools (`5000`), larger for network/heavy work. |
-| `permission` | no | `"auto"` or `"ask"` — see below. |
-| `path_args` | no | Array of input arg names that refer to paths (e.g. `["repo", "path"]`). Only relevant for `ask`; `auto` ignores it. |
+| `permission` | no | `"auto"`, `"ask"` (default), or `"auto_workdir"` — see the Permission section. |
+| `path_args` | no | Input arg names that are filesystem paths (e.g. `["input_path", "output_path"]`). Gates the working-dir scope for `auto_workdir`; shapes the prompt for `ask`; ignored by `auto`. |
 
-## Permission: `auto` vs `ask`
+## Permission: `auto`, `ask`, and `auto_workdir`
 
-This is the approval gate, and the main reason a tool exists instead of `run_command`.
+This is the approval gate, and the main reason a dedicated tool exists instead of the approval-gated `run_command`.
 
-- **`"ask"` (default)** — the harness shows the call and waits for the user to approve before running it. Use for anything that writes, deletes, installs, or otherwise is hard to undo: `write_local_file`, `run_command`, the image/PDF writers.
-- **`"auto"`** — the harness validates the args against `input_schema` and runs the tool immediately, with no chat prompt. Use for **read-only, side-effect-free** operations: `check_installed`, `machine_config`, `list_dir`, `git_read`, `list_processes`.
+- **`"ask"` (default)** — the harness shows the call and waits for the user to approve before running it. Use for anything that writes, deletes, installs, or is otherwise hard to undo: `write_local_file`, `run_command`, `run_python`, the image/PDF writers, `screenshot`, `read_webpage`.
+- **`"auto"`** — the harness validates the args against `input_schema` and runs immediately, with no chat prompt. Use for **read-only, side-effect-free** operations: `check_installed`, `machine_config`, `list_dir`, `render_tree`, `git_read`, `list_processes`, `list_python_packages`, the `search_*` tools.
+- **`"auto_workdir"`** — auto-runs when the paths in `path_args` resolve **inside the working directory**; anything outside falls back to the approval prompt. This is how a tool that reads user files (`read_local_file`) stays frictionless for normal work without granting blanket file access. It is the one permission where `path_args` actually gates behaviour.
 
-The rule for choosing: if the tool only *reads* and cannot corrupt the user's work, it should be `auto` — the whole point is to give the model a cheap, no-friction alternative to the approval-gated `run_command`. If it touches the filesystem or the system in a way that could break something, it must be `ask`.
+Choosing the value: read-only and touches nothing user-owned → `auto`; reads arbitrary files the user may not own → `auto_workdir`; writes/installs/irreversible → `ask`.
 
-`auto` tools do not consult `path_args`; that field only shapes the approval prompt for `ask` tools.
+`path_args` is ignored by `auto` tools but is still often listed for consistency (the `search_*` tools carry `path_args: []`). It only has effect for `ask` (shaping the prompt) and `auto_workdir` (deciding scope).
 
 ## Safety: no shell, no injection
 
@@ -125,6 +126,15 @@ The reasoning that led to this tool is a good template for the whole process.
 
 The resulting manifest declares the same input options as grep — `pattern`, `ignore_case`, `fixed`, `invert`, `max_matches` — and `permission: "auto"`. The script prints `{"ok": true, "data": {"pattern", "processes", "count", "total_matched", "truncated"}}`, and `output_schema` matches it.
 
+## Common output conventions
+
+Following the existing tools makes the `output_schema` easy to write and keeps results predictable:
+
+- **Listing / searching tools** end with `count` (number returned) and `truncated` (more exist than were returned): `list_dir`, `render_tree`, `list_processes`, `list_python_packages`, `search_files`.
+- **The `search_*` family** (web, github, steam, youtube) share a card shape — `required: ["type", "source", "query", "results", "text"]`, with `results` an array of objects. These are the only tools whose results the UI renders as embed cards via a `[[search:…]]` directive line.
+- **File-writing tools** report what changed on disk: `bytes_written` (`write_local_file`, `write_tmp_file`) or an `output_path` plus size/page counts (`pdf_*`, image tools).
+- A `path` echoing the input is a common `required` field for path-based tools.
+
 ## Testing a new tool
 
 There is no dedicated runner for a script with arguments, so invoke it directly with the same contract the harness uses:
@@ -150,5 +160,5 @@ The registry reads the `tools/` directory at startup. After adding the manifest 
 - [ ] `description` is specific — the model picks the tool from it.
 - [ ] Script reads `sys.argv[1]`, handles missing/bad args, prints exactly one `{"ok": …}` line.
 - [ ] Any external command is invoked with a **list of args**, never `shell=True`.
-- [ ] `permission` is `auto` only if the tool is truly read-only; otherwise `ask`.
+- [ ] `permission` chosen right: `auto` only if read-only and side-effect-free; `auto_workdir` if it reads user files by path; `ask` if it writes or is hard to undo.
 - [ ] Tested from the command line with a valid and an invalid call.
